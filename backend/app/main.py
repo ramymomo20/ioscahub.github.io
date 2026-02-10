@@ -12,8 +12,14 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
-from .config import settings
-from .db import db
+try:
+    from .config import settings
+    from .db import db
+except ImportError:
+    # Allow running this module directly (python main.py) in environments
+    # where package-relative imports are not available.
+    from config import settings  # type: ignore
+    from db import db  # type: ignore
 
 try:
     from rcon.source import Client as RconClient

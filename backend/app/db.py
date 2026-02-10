@@ -5,7 +5,11 @@ from typing import AsyncIterator
 
 import asyncpg
 
-from .config import settings
+try:
+    from .config import settings
+except ImportError:
+    # Allow direct module execution in non-package runtime contexts.
+    from config import settings  # type: ignore
 
 
 class Database:

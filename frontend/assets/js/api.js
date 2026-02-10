@@ -1,7 +1,7 @@
 (function () {
   function assertApiConfigured() {
     const base = String(window.HUB_CONFIG?.API_BASE_URL || '').trim();
-    if (!base || base.includes('YOUR-BACKEND-DOMAIN')) {
+    if (!base) {
       throw new Error(
         'Hub API URL is not configured. Open once with ?hub_api=https://your-api-domain/api'
       );

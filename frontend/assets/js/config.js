@@ -2,7 +2,7 @@
   const isLocal =
     window.location.hostname === "localhost" ||
     window.location.hostname === "127.0.0.1";
-  const isGithubPages = /\.github\.io$/i.test(window.location.hostname);
+  const globalDefaultApi = String(window.IOSCA_HUB_API_BASE_URL || "").trim();
 
   // Optional quick override:
   // https://.../frontend/index.html?hub_api=https://api.example.com/api
@@ -14,20 +14,20 @@
   }
 
   const storedApi = localStorage.getItem("IOSCA_HUB_API_BASE_URL");
-  const defaultApi = isLocal
+  const apiBase = isLocal
     ? "http://127.0.0.1:8080/api"
-    : (isGithubPages ? "https://YOUR-BACKEND-DOMAIN/api" : "/api");
-  const apiBase = storedApi || defaultApi;
+    : (storedApi || globalDefaultApi || "");
 
   function deriveWsUrl(apiUrl) {
+    if (!apiUrl) {
+      return "";
+    }
     try {
       const parsed = new URL(apiUrl);
       const wsProtocol = parsed.protocol === "https:" ? "wss:" : "ws:";
       return `${wsProtocol}//${parsed.host}/ws/live`;
     } catch (_) {
-      return isLocal
-        ? "ws://127.0.0.1:8080/ws/live"
-        : "wss://YOUR-BACKEND-DOMAIN/ws/live";
+      return "";
     }
   }
 
