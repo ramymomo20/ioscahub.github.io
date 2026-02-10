@@ -1,10 +1,88 @@
-<!DOCTYPE html>
-<html>
-  <head>
-    <title>My GitHub Page</title>
-  </head>
-  <body>
-    <h1>Hello World!</h1>
-    <p>This site is hosted on GitHub Pages!</p>
-  </body>
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>IOSCA Hub</title>
+  <meta name="description" content="Resultados, torneos y estadisticas de IOSCA.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&family=IBM+Plex+Sans:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/css/site.css">
+</head>
+<body>
+  <div class="page-bg"></div>
+  <header class="topbar">
+    <div class="brand-wrap">
+      <div class="brand-dot"></div>
+      <div>
+        <h1>IOSCA Hub</h1>
+        <p id="generatedAt">Cargando datos...</p>
+      </div>
+    </div>
+    <nav class="topnav">
+      <a href="#matches">Resultados</a>
+      <a href="#tournaments">Torneos</a>
+      <a href="#teams">Equipos</a>
+      <a href="#schedules">Agenda</a>
+    </nav>
+  </header>
+
+  <main class="layout">
+    <section class="panel summary-grid" id="summary"></section>
+
+    <section class="panel" id="matches">
+      <div class="panel-head">
+        <h2>Resultados recientes</h2>
+      </div>
+      <div id="matchesList" class="list-stack"></div>
+    </section>
+
+    <section class="panel" id="tournaments">
+      <div class="panel-head row-wrap">
+        <h2>Torneos</h2>
+        <select id="tournamentSelect" aria-label="Selecciona torneo"></select>
+      </div>
+      <div id="tournamentMeta" class="chip-row"></div>
+      <div class="split">
+        <div>
+          <h3>Tabla</h3>
+          <div id="standingsTable" class="table-wrap"></div>
+        </div>
+        <div>
+          <h3>Top jugadores</h3>
+          <div id="topPlayers" class="list-stack compact"></div>
+        </div>
+      </div>
+      <div class="split">
+        <div>
+          <h3>Fixtures</h3>
+          <div id="fixturesList" class="list-stack compact"></div>
+        </div>
+        <div>
+          <h3>Ultimos partidos del torneo</h3>
+          <div id="tournamentMatches" class="list-stack compact"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel" id="teams">
+      <div class="panel-head">
+        <h2>Equipos</h2>
+      </div>
+      <div id="teamsTable" class="table-wrap"></div>
+    </section>
+
+    <section class="panel" id="schedules">
+      <div class="panel-head">
+        <h2>Agenda de partidos</h2>
+      </div>
+      <div id="schedulesList" class="list-stack"></div>
+    </section>
+
+    <section id="errorBanner" class="error hidden"></section>
+  </main>
+
+  <script src="assets/js/app.js"></script>
+</body>
 </html>
