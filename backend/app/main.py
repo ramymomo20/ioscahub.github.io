@@ -434,7 +434,14 @@ async def player_detail(steam_id: str) -> dict[str, Any]:
                 pmd.yellow_cards,
                 pmd.pass_accuracy
             FROM PLAYER_MATCH_DATA pmd
-            JOIN MATCH_STATS ms ON ms.id::bigint = pmd.match_id::bigint
+            JOIN MATCH_STATS ms
+              ON (
+                   pmd.match_id::text = ms.match_id::text
+                   OR (
+                       pmd.match_id::text ~ '^[0-9]+$'
+                       AND pmd.match_id::bigint = ms.id::bigint
+                   )
+              )
             LEFT JOIN IOSCA_TEAMS ht ON ht.guild_id = ms.home_guild_id
             LEFT JOIN IOSCA_TEAMS at ON at.guild_id = ms.away_guild_id
             WHERE pmd.steam_id = $1
@@ -514,9 +521,8 @@ async def matches(limit: int = Query(default=250, ge=1, le=3000)) -> dict[str, A
 
 @app.get("/api/matches/{match_id}")
 async def match_detail(match_id: str) -> dict[str, Any]:
-    try:
-        match_pk = int(str(match_id).strip())
-    except Exception:
+    match_token = str(match_id).strip()
+    if not match_token:
         raise HTTPException(status_code=400, detail="Invalid match id")
 
     async with db.acquire() as conn:
@@ -535,13 +541,17 @@ async def match_detail(match_id: str) -> dict[str, Any]:
             LEFT JOIN IOSCA_TEAMS at ON at.guild_id = m.away_guild_id
             LEFT JOIN TOURNAMENT_MATCHES tm ON tm.match_stats_id = m.id
             LEFT JOIN TOURNAMENTS t ON t.id = tm.tournament_id
-            WHERE m.id = $1
+            WHERE m.id::text = $1 OR m.match_id::text = $1
+            ORDER BY m.datetime DESC
+            LIMIT 1
             """,
-            match_pk,
+            match_token,
         )
         if not row:
             raise HTTPException(status_code=404, detail="Match not found")
 
+        row_id = row.get("id")
+        row_match_id = str(row.get("match_id") or "")
         stats = await conn.fetch(
             """
             SELECT
@@ -549,10 +559,15 @@ async def match_detail(match_id: str) -> dict[str, Any]:
                 COALESCE(ip.discord_name, pmd.steam_id) AS player_name
             FROM PLAYER_MATCH_DATA pmd
             LEFT JOIN IOSCA_PLAYERS ip ON ip.steam_id = pmd.steam_id
-            WHERE pmd.match_id::bigint = $1::bigint
+            WHERE pmd.match_id::text = $2::text
+               OR (
+                   pmd.match_id::text ~ '^[0-9]+$'
+                   AND pmd.match_id::bigint = $1::bigint
+               )
             ORDER BY pmd.goals DESC, pmd.assists DESC, pmd.keeper_saves DESC, player_name ASC
             """,
-            match_pk,
+            row_id,
+            row_match_id,
         )
 
     match_payload = _record_to_dict(row)

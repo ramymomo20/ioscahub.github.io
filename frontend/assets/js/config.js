@@ -2,6 +2,7 @@
   const isLocal =
     window.location.hostname === "localhost" ||
     window.location.hostname === "127.0.0.1";
+  const productionDefaultApi = "https://iosca-api.sparked.network/api";
   const globalDefaultApi = String(window.IOSCA_HUB_API_BASE_URL || "").trim();
 
   function normalizeApiBase(value) {
@@ -33,7 +34,7 @@
   const storedApi = normalizeApiBase(localStorage.getItem("IOSCA_HUB_API_BASE_URL"));
   const apiBase = isLocal
     ? "http://127.0.0.1:8080/api"
-    : (storedApi || normalizeApiBase(globalDefaultApi) || "");
+    : (storedApi || normalizeApiBase(globalDefaultApi) || productionDefaultApi);
 
   function deriveWsUrl(apiUrl) {
     if (!apiUrl) {
