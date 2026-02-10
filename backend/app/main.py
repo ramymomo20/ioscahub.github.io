@@ -140,10 +140,15 @@ def _get_server_status_rcon_sync(address: str, password: str) -> dict[str, Any]:
     players_match = re.search(r"players\s*:\s*(\d+)\s+humans", response)
     max_players_match = re.search(r"players\s*:\s*\d+\s+humans,\s*\d+\s+bots,\s*(\d+)\s+max", response)
 
+    raw_map = map_match.group(1).strip() if map_match else None
+    if raw_map:
+        # Source status may append coordinates: "map_name at: 0 x, 0 y, 0 z"
+        raw_map = re.split(r"\s+at:\s+", raw_map, maxsplit=1, flags=re.IGNORECASE)[0].strip()
+
     return {
         "offline": False,
         "server_name": hostname_match.group(1).strip() if hostname_match else None,
-        "map_name": map_match.group(1).strip() if map_match else None,
+        "map_name": raw_map,
         "current_players": int(players_match.group(1)) if players_match else None,
         "max_players": int(max_players_match.group(1)) if max_players_match else None,
     }
@@ -423,7 +428,7 @@ async def player_detail(steam_id: str) -> dict[str, Any]:
                 pmd.yellow_cards,
                 pmd.pass_accuracy
             FROM PLAYER_MATCH_DATA pmd
-            JOIN MATCH_STATS ms ON ms.id::text = pmd.match_id::text
+            JOIN MATCH_STATS ms ON ms.id::bigint = pmd.match_id::bigint
             LEFT JOIN IOSCA_TEAMS ht ON ht.guild_id = ms.home_guild_id
             LEFT JOIN IOSCA_TEAMS at ON at.guild_id = ms.away_guild_id
             WHERE pmd.steam_id = $1
@@ -538,10 +543,10 @@ async def match_detail(match_id: str) -> dict[str, Any]:
                 COALESCE(ip.discord_name, pmd.steam_id) AS player_name
             FROM PLAYER_MATCH_DATA pmd
             LEFT JOIN IOSCA_PLAYERS ip ON ip.steam_id = pmd.steam_id
-            WHERE pmd.match_id::text = $1
+            WHERE pmd.match_id::bigint = $1::bigint
             ORDER BY pmd.goals DESC, pmd.assists DESC, pmd.keeper_saves DESC, player_name ASC
             """,
-            str(match_pk),
+            match_pk,
         )
 
     match_payload = _record_to_dict(row)
@@ -718,13 +723,14 @@ async def team_detail(guild_id: str) -> dict[str, Any]:
             if isinstance(item, dict):
                 roster.append(item)
 
-        discord_ids: list[int] = []
+        discord_ids: list[str] = []
         for entry in roster:
-            try:
-                if entry.get("id"):
-                    discord_ids.append(int(str(entry.get("id"))))
-            except Exception:
+            raw_id = entry.get("id")
+            if raw_id is None:
                 continue
+            value = str(raw_id).strip()
+            if value:
+                discord_ids.append(value)
 
         roster_players: dict[str, dict[str, Any]] = {}
         if discord_ids:
@@ -732,7 +738,7 @@ async def team_detail(guild_id: str) -> dict[str, Any]:
                 """
                 SELECT steam_id, discord_id, discord_name, rating
                 FROM IOSCA_PLAYERS
-                WHERE discord_id = ANY($1::bigint[])
+                WHERE discord_id::text = ANY($1::text[])
                 """,
                 discord_ids,
             )
