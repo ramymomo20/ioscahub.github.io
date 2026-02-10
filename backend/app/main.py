@@ -646,11 +646,17 @@ async def tournament_detail(tournament_id: int) -> dict[str, Any]:
                 f.is_played,
                 f.played_match_stats_id,
                 f.played_at,
+                f.home_guild_id,
+                f.away_guild_id,
+                m.home_score,
+                m.away_score,
+                m.datetime AS match_datetime,
                 COALESCE(ht.guild_name, f.home_name_raw, 'Home') AS home_team_name,
                 COALESCE(at.guild_name, f.away_name_raw, 'Away') AS away_team_name,
                 COALESCE(ht.guild_icon, '') AS home_team_icon,
                 COALESCE(at.guild_icon, '') AS away_team_icon
             FROM TOURNAMENT_FIXTURES f
+            LEFT JOIN MATCH_STATS m ON m.id = f.played_match_stats_id
             LEFT JOIN IOSCA_TEAMS ht ON ht.guild_id = f.home_guild_id
             LEFT JOIN IOSCA_TEAMS at ON at.guild_id = f.away_guild_id
             WHERE f.tournament_id = $1
@@ -674,11 +680,53 @@ async def tournament_detail(tournament_id: int) -> dict[str, Any]:
             tournament_id,
         )
 
+    team_forms: dict[str, list[str]] = defaultdict(list)
+    played_fixtures: list[Any] = []
+    for fixture in fixtures:
+        if not fixture.get("is_played"):
+            continue
+        if fixture.get("home_score") is None or fixture.get("away_score") is None:
+            continue
+        played_fixtures.append(fixture)
+
+    def _fixture_sort_key(item: Any) -> datetime:
+        dt_value = item.get("played_at") or item.get("match_datetime")
+        if isinstance(dt_value, datetime):
+            if dt_value.tzinfo is None:
+                return dt_value.replace(tzinfo=timezone.utc)
+            return dt_value.astimezone(timezone.utc)
+        return datetime.min.replace(tzinfo=timezone.utc)
+
+    played_fixtures.sort(key=_fixture_sort_key)
+
+    for fixture in played_fixtures:
+        home_id = str(fixture.get("home_guild_id") or "").strip()
+        away_id = str(fixture.get("away_guild_id") or "").strip()
+        if not home_id or not away_id:
+            continue
+        try:
+            home_score = int(fixture.get("home_score") or 0)
+            away_score = int(fixture.get("away_score") or 0)
+        except Exception:
+            continue
+        if home_score > away_score:
+            team_forms[home_id].append("W")
+            team_forms[away_id].append("L")
+        elif home_score < away_score:
+            team_forms[home_id].append("L")
+            team_forms[away_id].append("W")
+        else:
+            team_forms[home_id].append("D")
+            team_forms[away_id].append("D")
+
+    trimmed_team_forms = {team_id: results[-5:] for team_id, results in team_forms.items()}
+
     return {
         "tournament": _record_to_dict(tournament),
         "standings": _records_to_dicts(standings),
         "fixtures": _records_to_dicts(fixtures),
         "teams": _records_to_dicts(teams),
+        "team_forms": trimmed_team_forms,
     }
 
 

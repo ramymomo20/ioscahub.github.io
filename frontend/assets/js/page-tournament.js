@@ -16,6 +16,22 @@
     const standings = data.standings || [];
     const fixtures = data.fixtures || [];
     const teams = data.teams || [];
+    const teamForms = data.team_forms || {};
+
+    function formIcon(result) {
+      const key = String(result || "").toUpperCase();
+      if (!["W", "D", "L"].includes(key)) return "";
+      const iconName = key === "W" ? "form-w.svg" : key === "D" ? "form-d.svg" : "form-l.svg";
+      return `<img class="form-icon" src="assets/icons/${iconName}" alt="${key}" title="${key}">`;
+    }
+
+    function renderForm(guildId) {
+      const form = teamForms[String(guildId)] || [];
+      if (!Array.isArray(form) || !form.length) {
+        return `<span class="meta">No form</span>`;
+      }
+      return `<span class="form-strip">${form.map(formIcon).join("")}</span>`;
+    }
 
     page.innerHTML = `
       <div class="grid cols-4">
@@ -30,7 +46,7 @@
           <h3>Standings</h3>
           <div class="table-wrap">
             <table>
-              <thead><tr><th>#</th><th>Team</th><th>MP</th><th>W</th><th>D</th><th>L</th><th>GF</th><th>GA</th><th>GD</th><th>PTS</th></tr></thead>
+              <thead><tr><th>#</th><th>Team</th><th>Form</th><th>MP</th><th>W</th><th>D</th><th>L</th><th>GF</th><th>GA</th><th>GD</th><th>PTS</th></tr></thead>
               <tbody>
                 ${standings.map((s, idx) => `
                   <tr>
@@ -41,6 +57,7 @@
                         <a href="team.html?id=${esc(s.guild_id)}">${esc(s.team_name)}</a>
                       </span>
                     </td>
+                    <td>${renderForm(s.guild_id)}</td>
                     <td>${esc(s.matches_played)}</td>
                     <td>${esc(s.wins)}</td>
                     <td>${esc(s.draws)}</td>
@@ -63,6 +80,7 @@
               <div class="item">
                 <div><a href="team.html?id=${esc(team.guild_id)}">${esc(team.team_name)}</a></div>
                 <div class="meta">Captain: ${esc(team.captain_name || 'N/A')}</div>
+                <div class="meta">Last 5: ${renderForm(team.guild_id)}</div>
               </div>
             `).join('') : '<div class="empty">No teams linked.</div>'}
           </div>

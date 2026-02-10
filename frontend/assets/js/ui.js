@@ -41,11 +41,14 @@
     return `
       <header class="header">
         <div class="header-inner">
-          <a class="brand" href="index.html">IOSCA Hub</a>
+          <a class="brand" href="index.html">
+            <span class="brand-dot"></span>
+            IOSCA Hub
+          </a>
           <nav class="nav">
             ${links.map(([href, label]) => {
               const active = activePage === href ? 'active' : '';
-              return `<a class="${active}" href="${href}">${label}</a>`;
+              return `<a class="nav-link ${active}" href="${href}">${label}</a>`;
             }).join('')}
           </nav>
         </div>
@@ -56,7 +59,24 @@
   function renderLayout(activePage, pageTitle) {
     const root = byId('app');
     if (!root) return;
-    root.innerHTML = `${navTemplate(activePage)}<main class="main"><section class="card"><h1>${esc(pageTitle)}</h1><div id="page"></div></section></main>`;
+    root.innerHTML = `
+      ${navTemplate(activePage)}
+      <main class="main">
+        <section class="hero-banner">
+          <div class="hero-banner-glow"></div>
+          <div class="hero-banner-inner">
+            <img class="hero-logo" src="assets/icons/iosca-icon.png" alt="IOSCA logo" onerror="if(!this.dataset.fallback){this.dataset.fallback='1';this.src='assets/img/iosca-logo.png';}else{this.style.display='none';}">
+            <div>
+              <div class="hero-kicker">IOSCA COMMUNITY</div>
+              <h1 class="hero-title">${esc(pageTitle)}</h1>
+            </div>
+          </div>
+        </section>
+        <section class="card page-card">
+          <div id="page"></div>
+        </section>
+      </main>
+    `;
   }
 
   function showError(message) {
