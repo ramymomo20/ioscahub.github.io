@@ -22,6 +22,13 @@ except Exception:
     RconClient = None
     RCON_AVAILABLE = False
 
+try:
+    import a2s
+    A2S_AVAILABLE = True
+except Exception:
+    a2s = None
+    A2S_AVAILABLE = False
+
 JS_MAX_SAFE_INTEGER = 9007199254740991
 
 
@@ -145,6 +152,29 @@ def _get_server_status_rcon_sync(address: str, password: str) -> dict[str, Any]:
 async def _get_server_status_rcon(address: str, password: str) -> dict[str, Any]:
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, _get_server_status_rcon_sync, address, password)
+
+
+async def _get_server_status_a2s(address: str) -> dict[str, Any]:
+    if not A2S_AVAILABLE:
+        return {"offline": True}
+    parsed = _parse_address(address)
+    if not parsed:
+        return {"offline": True}
+
+    host, port = parsed
+    try:
+        info = await a2s.ainfo((host, port))
+    except Exception:
+        return {"offline": True}
+
+    return {
+        "offline": False,
+        "server_name": getattr(info, "server_name", None),
+        "map_name": getattr(info, "map_name", None),
+        "current_players": getattr(info, "player_count", None),
+        "max_players": getattr(info, "max_players", None),
+        "is_mix": bool(getattr(info, "password_protected", False)),
+    }
 
 
 class WSManager:
@@ -393,7 +423,7 @@ async def player_detail(steam_id: str) -> dict[str, Any]:
                 pmd.yellow_cards,
                 pmd.pass_accuracy
             FROM PLAYER_MATCH_DATA pmd
-            JOIN MATCH_STATS ms ON ms.id = pmd.match_id
+            JOIN MATCH_STATS ms ON ms.id::text = pmd.match_id::text
             LEFT JOIN IOSCA_TEAMS ht ON ht.guild_id = ms.home_guild_id
             LEFT JOIN IOSCA_TEAMS at ON at.guild_id = ms.away_guild_id
             WHERE pmd.steam_id = $1
@@ -508,10 +538,10 @@ async def match_detail(match_id: str) -> dict[str, Any]:
                 COALESCE(ip.discord_name, pmd.steam_id) AS player_name
             FROM PLAYER_MATCH_DATA pmd
             LEFT JOIN IOSCA_PLAYERS ip ON ip.steam_id = pmd.steam_id
-            WHERE pmd.match_id = $1
+            WHERE pmd.match_id::text = $1
             ORDER BY pmd.goals DESC, pmd.assists DESC, pmd.keeper_saves DESC, player_name ASC
             """,
-            match_pk,
+            str(match_pk),
         )
 
     match_payload = _record_to_dict(row)
@@ -827,31 +857,36 @@ async def servers() -> dict[str, Any]:
         rows = await conn.fetch(query)
 
     servers_payload = _records_to_dicts(rows)
-    status_tasks: list[asyncio.Future] = []
-    status_index: list[int] = []
-    for idx, server in enumerate(servers_payload):
-        if (
-            server.get("is_active")
-            and server.get("address")
-            and server.get("password")
-            and RCON_AVAILABLE
-        ):
-            status_tasks.append(_get_server_status_rcon(server["address"], server["password"]))
-            status_index.append(idx)
+    async def _enrich_server(server: dict[str, Any]) -> None:
+        if not server.get("is_active") or not server.get("address"):
+            return
 
-    if status_tasks:
-        results = await asyncio.gather(*status_tasks, return_exceptions=True)
-        for task_idx, result in enumerate(results):
-            payload_idx = status_index[task_idx]
-            if isinstance(result, Exception):
-                continue
-            servers_payload[payload_idx]["rcon_online"] = not bool(result.get("offline"))
-            if result.get("current_players") is not None:
-                servers_payload[payload_idx]["current_players"] = result.get("current_players")
-            if result.get("map_name"):
-                servers_payload[payload_idx]["map_name"] = result.get("map_name")
-            if result.get("max_players") is not None:
-                servers_payload[payload_idx]["max_players"] = result.get("max_players")
+        # First try the same method used by /server_status (A2S), then fallback to RCON.
+        status: dict[str, Any] = {"offline": True}
+        if A2S_AVAILABLE:
+            status = await _get_server_status_a2s(server["address"])
+
+        if status.get("offline") and RCON_AVAILABLE and server.get("password"):
+            status = await _get_server_status_rcon(server["address"], server["password"])
+
+        if status.get("offline"):
+            server["live_online"] = False
+            return
+
+        server["live_online"] = True
+        if status.get("server_name"):
+            server["live_name"] = status.get("server_name")
+        if status.get("current_players") is not None:
+            server["current_players"] = status.get("current_players")
+        if status.get("map_name"):
+            server["map_name"] = status.get("map_name")
+        if status.get("max_players") is not None:
+            server["max_players"] = status.get("max_players")
+        if status.get("is_mix") is not None:
+            server["is_mix"] = bool(status.get("is_mix"))
+
+    if servers_payload:
+        await asyncio.gather(*[_enrich_server(server) for server in servers_payload], return_exceptions=True)
 
     for server in servers_payload:
         address = server.get("address")
