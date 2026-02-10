@@ -1,42 +1,88 @@
-# IOSCA Hub (GitHub Pages)
+﻿# IOSCA Hub
 
-Static hub for IOSCA results, standings, tournaments, teams, and schedules.
+This repository now has a split architecture:
 
-## Structure
+- `backend/`: FastAPI API over your existing Supabase/Postgres schema
+- `frontend/`: static multi-page UI (Rankings, Players, Matches, Tournaments, Teams, Servers, Discord)
 
-- `index.html`: main page
-- `assets/css/site.css`: styles
-- `assets/js/app.js`: render logic from JSON
-- `data/hub.json`: exported dataset consumed by the page
+The root `index.html` redirects to `frontend/index.html`.
 
-## Export data from Supabase
+## Implemented subpages
 
-From the project root:
+- `frontend/rankings.html`
+- `frontend/players.html`
+- `frontend/player.html?steam_id=...`
+- `frontend/matches.html`
+- `frontend/match.html?id=...`
+- `frontend/tournaments.html`
+- `frontend/tournament.html?id=...`
+- `frontend/teams.html`
+- `frontend/team.html?id=...`
+- `frontend/servers.html`
+- `frontend/discord.html`
+
+## Backend setup
 
 ```bash
-python tools/export_hub_data.py --db-url "$SUPABASE_DB_URL"
+cd backend
+python -m venv .venv
+. .venv/Scripts/Activate.ps1
+pip install -r requirements.txt
+copy .env.example .env
 ```
 
-If `SUPABASE_DB_URL` is already in your environment, you can run:
+Set at least:
+
+- `SUPABASE_DB_URL`
+
+Run:
 
 ```bash
-python tools/export_hub_data.py
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8080
 ```
 
-The script writes:
+API health:
 
-- `iosca_hub_github/ioscahub.github.io/data/hub.json`
+- `GET http://127.0.0.1:8080/api/health`
 
-## What the page shows
+## Frontend setup
 
-- Recent match results (`MATCH_STATS`)
-- Tournament standings and fixtures (`TOURNAMENT_STANDINGS`, `TOURNAMENT_FIXTURES`)
-- Tournament top players (`TOURNAMENT_PLAYER_STATS`)
-- Team overview (`IOSCA_TEAMS` + match aggregates)
-- Open schedule entries (`TOURNAMENT_SCHEDULES`)
+No build step required.
 
-## Publish on GitHub Pages
+Serve static files from this repo root (or from `frontend/`):
 
-1. Push this folder to your `ioscahub.github.io` repository root.
-2. In repository settings, enable GitHub Pages from `main` branch root.
-3. Re-run `tools/export_hub_data.py` whenever you want fresh data, then commit/push `data/hub.json`.
+```bash
+# Example with Python
+python -m http.server 5500
+```
+
+Then open:
+
+- `http://127.0.0.1:5500/frontend/index.html`
+
+`frontend/assets/js/config.js` auto-uses local API (`127.0.0.1:8080`) on localhost.
+
+## Configs for websocket/webhook/tokens
+
+Backend env file: `backend/.env.example`
+
+Includes:
+
+- websocket toggles/path
+- webhook toggle/token
+- discord links and optional bot token
+- steam key placeholder
+- rcon polling placeholders
+
+Frontend API/WS config:
+
+- `frontend/assets/js/config.js`
+- `frontend/assets/js/config.example.js`
+
+## Existing JSON exporter
+
+The static export tooling still exists under `tools/`:
+
+- `tools/export_hub_data.py`
+
+Use this only if you want a no-backend static snapshot in `data/hub.json`.

@@ -1,0 +1,779 @@
+﻿from __future__ import annotations
+
+import asyncio
+import json
+from collections import defaultdict
+from datetime import datetime, timezone
+from typing import Any
+
+from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
+
+from .config import settings
+from .db import db
+
+
+def _to_iso(value: Any) -> Any:
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value.isoformat()
+    return value
+
+
+def _record_to_dict(row: Any) -> dict[str, Any]:
+    if row is None:
+        return {}
+    payload = dict(row)
+    for key, value in list(payload.items()):
+        payload[key] = _to_iso(value)
+    return payload
+
+
+def _records_to_dicts(rows: list[Any]) -> list[dict[str, Any]]:
+    return [_record_to_dict(row) for row in rows]
+
+
+def _parse_json(value: Any, fallback: Any) -> Any:
+    if value is None:
+        return fallback
+    if isinstance(value, (dict, list)):
+        return value
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except Exception:
+            return fallback
+    return fallback
+
+
+def _default_discord_avatar(discord_id: Any) -> str:
+    try:
+        seed = int(str(discord_id)) % 5
+    except Exception:
+        seed = 0
+    return f"https://cdn.discordapp.com/embed/avatars/{seed}.png"
+
+
+def _steam_profile_url(steam_id: str | None) -> str | None:
+    if not steam_id:
+        return None
+    sid = str(steam_id).strip()
+    if sid.isdigit() and len(sid) >= 16:
+        return f"https://steamcommunity.com/profiles/{sid}"
+    return f"https://steamcommunity.com/search/users/#text={sid}"
+
+
+class WSManager:
+    def __init__(self) -> None:
+        self._sockets: set[WebSocket] = set()
+        self._lock = asyncio.Lock()
+
+    async def connect(self, ws: WebSocket) -> None:
+        await ws.accept()
+        async with self._lock:
+            self._sockets.add(ws)
+
+    async def disconnect(self, ws: WebSocket) -> None:
+        async with self._lock:
+            self._sockets.discard(ws)
+
+    async def broadcast(self, payload: dict[str, Any]) -> None:
+        dead: list[WebSocket] = []
+        async with self._lock:
+            sockets = list(self._sockets)
+        for ws in sockets:
+            try:
+                await ws.send_json(payload)
+            except Exception:
+                dead.append(ws)
+        if dead:
+            async with self._lock:
+                for ws in dead:
+                    self._sockets.discard(ws)
+
+
+ws_manager = WSManager()
+
+
+app = FastAPI(title=settings.app_name)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins,
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.on_event("startup")
+async def on_startup() -> None:
+    await db.connect()
+
+
+@app.on_event("shutdown")
+async def on_shutdown() -> None:
+    await db.disconnect()
+
+
+@app.get("/api/health")
+async def health() -> dict[str, Any]:
+    return {
+        "status": "ok",
+        "app": settings.app_name,
+        "env": settings.app_env,
+        "websocket_enabled": settings.websocket_enabled,
+        "webhook_enabled": settings.webhook_enabled,
+        "ts": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@app.get("/api/summary")
+async def summary() -> dict[str, Any]:
+    async with db.acquire() as conn:
+        counts = await conn.fetchrow(
+            """
+            SELECT
+                (SELECT COUNT(*) FROM IOSCA_PLAYERS) AS players_total,
+                (SELECT COUNT(*) FROM IOSCA_TEAMS) AS teams_total,
+                (SELECT COUNT(*) FROM MATCH_STATS) AS matches_total,
+                (SELECT COUNT(*) FROM TOURNAMENTS) AS tournaments_total,
+                (SELECT COUNT(*) FROM TOURNAMENTS WHERE status='active') AS active_tournaments_total,
+                (SELECT COUNT(*) FROM IOS_SERVERS WHERE is_active=TRUE) AS active_servers_total
+            """
+        )
+    return _record_to_dict(counts)
+
+
+@app.get("/api/rankings")
+async def rankings(limit: int = Query(default=200, ge=1, le=2000)) -> dict[str, Any]:
+    async with db.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            WITH latest_pos AS (
+                SELECT DISTINCT ON (steam_id)
+                    steam_id,
+                    NULLIF(position, '') AS position
+                FROM PLAYER_MATCH_DATA
+                WHERE position IS NOT NULL AND position <> ''
+                ORDER BY steam_id, updated_at DESC NULLS LAST, id DESC
+            )
+            SELECT
+                p.steam_id,
+                p.discord_id,
+                p.discord_name,
+                COALESCE(lp.position, 'N/A') AS position,
+                COALESCE(p.rating, 5.0) AS rating,
+                p.rating_updated_at
+            FROM IOSCA_PLAYERS p
+            LEFT JOIN latest_pos lp ON lp.steam_id = p.steam_id
+            ORDER BY p.rating DESC NULLS LAST, p.discord_name ASC
+            LIMIT $1
+            """,
+            limit,
+        )
+
+    players = _records_to_dicts(rows)
+    for item in players:
+        item["avatar_url"] = _default_discord_avatar(item.get("discord_id"))
+
+    def best_for(positions: set[str]) -> dict[str, Any] | None:
+        for p in players:
+            pos = str(p.get("position") or "").upper()
+            if pos in positions:
+                return p
+        return None
+
+    widgets = {
+        "best_goalkeeper": best_for({"GK"}),
+        "best_defender": best_for({"LB", "RB", "CB", "DEF"}),
+        "best_midfielder": best_for({"CM", "LM", "RM", "MID"}),
+        "best_attacker": best_for({"CF", "LW", "RW", "ST", "ATT"}),
+    }
+
+    return {"players": players, "widgets": widgets}
+
+
+@app.get("/api/players")
+async def players(limit: int = Query(default=500, ge=1, le=5000)) -> dict[str, Any]:
+    async with db.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            WITH latest_pos AS (
+                SELECT DISTINCT ON (steam_id)
+                    steam_id,
+                    NULLIF(position, '') AS position
+                FROM PLAYER_MATCH_DATA
+                WHERE position IS NOT NULL AND position <> ''
+                ORDER BY steam_id, updated_at DESC NULLS LAST, id DESC
+            )
+            SELECT
+                p.steam_id,
+                p.discord_id,
+                p.discord_name,
+                COALESCE(lp.position, 'N/A') AS position,
+                COALESCE(p.rating, 5.0) AS rating,
+                p.registered_at,
+                p.last_active
+            FROM IOSCA_PLAYERS p
+            LEFT JOIN latest_pos lp ON lp.steam_id = p.steam_id
+            ORDER BY p.discord_name ASC
+            LIMIT $1
+            """,
+            limit,
+        )
+
+    payload = _records_to_dicts(rows)
+    for item in payload:
+        item["avatar_url"] = _default_discord_avatar(item.get("discord_id"))
+        item["steam_profile_url"] = _steam_profile_url(item.get("steam_id"))
+    return {"players": payload}
+
+
+@app.get("/api/players/{steam_id}")
+async def player_detail(steam_id: str) -> dict[str, Any]:
+    async with db.acquire() as conn:
+        player = await conn.fetchrow(
+            """
+            WITH latest_pos AS (
+                SELECT DISTINCT ON (steam_id)
+                    steam_id,
+                    NULLIF(position, '') AS position
+                FROM PLAYER_MATCH_DATA
+                WHERE steam_id = $1
+                  AND position IS NOT NULL AND position <> ''
+                ORDER BY steam_id, updated_at DESC NULLS LAST, id DESC
+            )
+            SELECT
+                p.steam_id,
+                p.discord_id,
+                p.discord_name,
+                COALESCE(lp.position, 'N/A') AS position,
+                COALESCE(p.rating, 5.0) AS rating,
+                p.rating_updated_at,
+                p.registered_at,
+                p.last_active
+            FROM IOSCA_PLAYERS p
+            LEFT JOIN latest_pos lp ON lp.steam_id = p.steam_id
+            WHERE p.steam_id = $1
+            """,
+            steam_id,
+        )
+        if not player:
+            raise HTTPException(status_code=404, detail="Player not found")
+
+        totals = await conn.fetchrow(
+            """
+            SELECT
+                COUNT(*) AS matches_played,
+                COALESCE(SUM(goals), 0) AS goals,
+                COALESCE(SUM(assists), 0) AS assists,
+                COALESCE(SUM(second_assists), 0) AS second_assists,
+                COALESCE(SUM(keeper_saves), 0) AS keeper_saves,
+                COALESCE(SUM(tackles), 0) AS tackles,
+                COALESCE(SUM(interceptions), 0) AS interceptions,
+                COALESCE(SUM(yellow_cards), 0) AS yellow_cards,
+                COALESCE(SUM(red_cards), 0) AS red_cards,
+                COALESCE(AVG(pass_accuracy), 0) AS avg_pass_accuracy
+            FROM PLAYER_MATCH_DATA
+            WHERE steam_id = $1
+            """,
+            steam_id,
+        )
+
+        recent = await conn.fetch(
+            """
+            SELECT
+                pmd.match_id,
+                ms.datetime,
+                COALESCE(ht.guild_name, ms.home_team_name) AS home_team_name,
+                COALESCE(at.guild_name, ms.away_team_name) AS away_team_name,
+                ms.home_score,
+                ms.away_score,
+                pmd.position,
+                pmd.goals,
+                pmd.assists,
+                pmd.keeper_saves,
+                pmd.tackles,
+                pmd.interceptions,
+                pmd.red_cards,
+                pmd.yellow_cards,
+                pmd.pass_accuracy
+            FROM PLAYER_MATCH_DATA pmd
+            JOIN MATCH_STATS ms ON ms.id = pmd.match_id
+            LEFT JOIN IOSCA_TEAMS ht ON ht.guild_id = ms.home_guild_id
+            LEFT JOIN IOSCA_TEAMS at ON at.guild_id = ms.away_guild_id
+            WHERE pmd.steam_id = $1
+            ORDER BY ms.datetime DESC
+            LIMIT 20
+            """,
+            steam_id,
+        )
+
+        team = await conn.fetchrow(
+            """
+            SELECT guild_id, guild_name, guild_icon, captain_id, captain_name
+            FROM IOSCA_TEAMS
+            WHERE EXISTS (
+                SELECT 1
+                FROM jsonb_array_elements(COALESCE(players, '[]'::jsonb)) p
+                WHERE (p->>'id') = CAST($1 AS text)
+                   OR (p->>'steam_id') = $2
+            )
+            LIMIT 1
+            """,
+            player.get("discord_id"),
+            steam_id,
+        )
+
+    player_payload = _record_to_dict(player)
+    player_payload["avatar_url"] = _default_discord_avatar(player_payload.get("discord_id"))
+    player_payload["steam_profile_url"] = _steam_profile_url(steam_id)
+    return {
+        "player": player_payload,
+        "totals": _record_to_dict(totals),
+        "recent_matches": _records_to_dicts(recent),
+        "team": _record_to_dict(team),
+    }
+
+
+@app.get("/api/matches")
+async def matches(limit: int = Query(default=250, ge=1, le=3000)) -> dict[str, Any]:
+    async with db.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT
+                m.id,
+                m.match_id,
+                m.datetime,
+                m.game_type,
+                m.home_guild_id,
+                m.away_guild_id,
+                COALESCE(ht.guild_name, m.home_team_name) AS home_team_name,
+                COALESCE(at.guild_name, m.away_team_name) AS away_team_name,
+                COALESCE(ht.guild_icon, '') AS home_team_icon,
+                COALESCE(at.guild_icon, '') AS away_team_icon,
+                m.home_score,
+                m.away_score,
+                m.extratime,
+                m.penalties,
+                tm.tournament_id,
+                t.name AS tournament_name
+            FROM MATCH_STATS m
+            LEFT JOIN IOSCA_TEAMS ht ON ht.guild_id = m.home_guild_id
+            LEFT JOIN IOSCA_TEAMS at ON at.guild_id = m.away_guild_id
+            LEFT JOIN TOURNAMENT_MATCHES tm ON tm.match_stats_id = m.id
+            LEFT JOIN TOURNAMENTS t ON t.id = tm.tournament_id
+            ORDER BY m.datetime DESC
+            LIMIT $1
+            """,
+            limit,
+        )
+    return {"matches": _records_to_dicts(rows)}
+
+
+@app.get("/api/matches/{match_id}")
+async def match_detail(match_id: int) -> dict[str, Any]:
+    async with db.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT
+                m.*,
+                COALESCE(ht.guild_name, m.home_team_name) AS home_team_name,
+                COALESCE(at.guild_name, m.away_team_name) AS away_team_name,
+                COALESCE(ht.guild_icon, '') AS home_team_icon,
+                COALESCE(at.guild_icon, '') AS away_team_icon,
+                tm.tournament_id,
+                t.name AS tournament_name
+            FROM MATCH_STATS m
+            LEFT JOIN IOSCA_TEAMS ht ON ht.guild_id = m.home_guild_id
+            LEFT JOIN IOSCA_TEAMS at ON at.guild_id = m.away_guild_id
+            LEFT JOIN TOURNAMENT_MATCHES tm ON tm.match_stats_id = m.id
+            LEFT JOIN TOURNAMENTS t ON t.id = tm.tournament_id
+            WHERE m.id = $1
+            """,
+            match_id,
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail="Match not found")
+
+        stats = await conn.fetch(
+            """
+            SELECT
+                pmd.*,
+                COALESCE(ip.discord_name, pmd.steam_id) AS player_name
+            FROM PLAYER_MATCH_DATA pmd
+            LEFT JOIN IOSCA_PLAYERS ip ON ip.steam_id = pmd.steam_id
+            WHERE pmd.match_id = $1
+            ORDER BY pmd.goals DESC, pmd.assists DESC, pmd.keeper_saves DESC, player_name ASC
+            """,
+            match_id,
+        )
+
+    match_payload = _record_to_dict(row)
+    match_payload["home_lineup"] = _parse_json(match_payload.get("home_lineup"), [])
+    match_payload["away_lineup"] = _parse_json(match_payload.get("away_lineup"), [])
+    match_payload["substitutions"] = _parse_json(match_payload.get("substitutions"), [])
+
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for item in _records_to_dicts(stats):
+        side = "neutral"
+        if str(item.get("guild_id") or "") == str(match_payload.get("home_guild_id") or ""):
+            side = "home"
+        elif str(item.get("guild_id") or "") == str(match_payload.get("away_guild_id") or ""):
+            side = "away"
+        grouped[side].append(item)
+
+    return {
+        "match": match_payload,
+        "player_stats": {
+            "home": grouped.get("home", []),
+            "away": grouped.get("away", []),
+            "neutral": grouped.get("neutral", []),
+        },
+    }
+
+
+@app.get("/api/tournaments")
+async def tournaments() -> dict[str, Any]:
+    async with db.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT
+                t.id,
+                t.name,
+                t.format,
+                t.status,
+                t.num_teams,
+                t.created_at,
+                t.updated_at,
+                COALESCE(COUNT(DISTINCT tf.id), 0) AS fixtures_total,
+                COALESCE(COUNT(DISTINCT CASE WHEN tf.is_played THEN tf.id END), 0) AS fixtures_played,
+                COALESCE(COUNT(DISTINCT tm.id), 0) AS matches_linked
+            FROM TOURNAMENTS t
+            LEFT JOIN TOURNAMENT_FIXTURES tf ON tf.tournament_id = t.id
+            LEFT JOIN TOURNAMENT_MATCHES tm ON tm.tournament_id = t.id
+            GROUP BY t.id
+            ORDER BY CASE t.status WHEN 'active' THEN 0 WHEN 'ended' THEN 1 ELSE 2 END, t.updated_at DESC
+            """
+        )
+    return {"tournaments": _records_to_dicts(rows)}
+
+
+@app.get("/api/tournaments/{tournament_id}")
+async def tournament_detail(tournament_id: int) -> dict[str, Any]:
+    async with db.acquire() as conn:
+        tournament = await conn.fetchrow("SELECT * FROM TOURNAMENTS WHERE id = $1", tournament_id)
+        if not tournament:
+            raise HTTPException(status_code=404, detail="Tournament not found")
+
+        standings = await conn.fetch(
+            """
+            SELECT
+                s.guild_id,
+                COALESCE(tt.team_name_snapshot, it.guild_name, CONCAT('Team ', s.guild_id::text)) AS team_name,
+                COALESCE(tt.team_icon_snapshot, it.guild_icon, '') AS team_icon,
+                s.matches_played,
+                s.wins,
+                s.draws,
+                s.losses,
+                s.goals_for,
+                s.goals_against,
+                s.goal_diff,
+                s.points
+            FROM TOURNAMENT_STANDINGS s
+            LEFT JOIN TOURNAMENT_TEAMS tt
+                ON tt.tournament_id = s.tournament_id
+               AND tt.guild_id = s.guild_id
+            LEFT JOIN IOSCA_TEAMS it ON it.guild_id = s.guild_id
+            WHERE s.tournament_id = $1
+            ORDER BY s.points DESC, s.goal_diff DESC, s.goals_for DESC, team_name ASC
+            """,
+            tournament_id,
+        )
+
+        fixtures = await conn.fetch(
+            """
+            SELECT
+                f.id,
+                f.week_number,
+                f.week_label,
+                f.is_active,
+                f.is_played,
+                f.played_match_stats_id,
+                f.played_at,
+                COALESCE(ht.guild_name, f.home_name_raw, 'Home') AS home_team_name,
+                COALESCE(at.guild_name, f.away_name_raw, 'Away') AS away_team_name,
+                COALESCE(ht.guild_icon, '') AS home_team_icon,
+                COALESCE(at.guild_icon, '') AS away_team_icon
+            FROM TOURNAMENT_FIXTURES f
+            LEFT JOIN IOSCA_TEAMS ht ON ht.guild_id = f.home_guild_id
+            LEFT JOIN IOSCA_TEAMS at ON at.guild_id = f.away_guild_id
+            WHERE f.tournament_id = $1
+            ORDER BY f.week_number NULLS LAST, f.id ASC
+            """,
+            tournament_id,
+        )
+
+        teams = await conn.fetch(
+            """
+            SELECT
+                tt.guild_id,
+                COALESCE(tt.team_name_snapshot, it.guild_name) AS team_name,
+                COALESCE(tt.team_icon_snapshot, it.guild_icon, '') AS team_icon,
+                it.captain_name
+            FROM TOURNAMENT_TEAMS tt
+            LEFT JOIN IOSCA_TEAMS it ON it.guild_id = tt.guild_id
+            WHERE tt.tournament_id = $1
+            ORDER BY team_name ASC
+            """,
+            tournament_id,
+        )
+
+    return {
+        "tournament": _record_to_dict(tournament),
+        "standings": _records_to_dicts(standings),
+        "fixtures": _records_to_dicts(fixtures),
+        "teams": _records_to_dicts(teams),
+    }
+
+
+@app.get("/api/teams")
+async def teams() -> dict[str, Any]:
+    async with db.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT
+                guild_id,
+                guild_name,
+                guild_icon,
+                captain_id,
+                captain_name,
+                average_rating,
+                created_at,
+                updated_at,
+                players
+            FROM IOSCA_TEAMS
+            ORDER BY guild_name ASC
+            """
+        )
+
+    payload = _records_to_dicts(rows)
+    for item in payload:
+        roster = _parse_json(item.get("players"), [])
+        item["player_count"] = len(roster) if isinstance(roster, list) else 0
+    return {"teams": payload}
+
+
+@app.get("/api/teams/{guild_id}")
+async def team_detail(guild_id: int) -> dict[str, Any]:
+    async with db.acquire() as conn:
+        team = await conn.fetchrow("SELECT * FROM IOSCA_TEAMS WHERE guild_id = $1", guild_id)
+        if not team:
+            raise HTTPException(status_code=404, detail="Team not found")
+
+        roster_raw = _parse_json(team.get("players"), [])
+        roster: list[dict[str, Any]] = []
+        for item in roster_raw if isinstance(roster_raw, list) else []:
+            if isinstance(item, dict):
+                roster.append(item)
+
+        discord_ids: list[int] = []
+        for entry in roster:
+            try:
+                if entry.get("id"):
+                    discord_ids.append(int(str(entry.get("id"))))
+            except Exception:
+                continue
+
+        roster_players: dict[str, dict[str, Any]] = {}
+        if discord_ids:
+            rows = await conn.fetch(
+                """
+                SELECT steam_id, discord_id, discord_name, rating
+                FROM IOSCA_PLAYERS
+                WHERE discord_id = ANY($1::bigint[])
+                """,
+                discord_ids,
+            )
+            for row in rows:
+                item = _record_to_dict(row)
+                item["avatar_url"] = _default_discord_avatar(item.get("discord_id"))
+                roster_players[str(item.get("discord_id"))] = item
+
+        team_stats = await conn.fetchrow(
+            """
+            SELECT
+                COUNT(*) AS matches_played,
+                SUM(CASE
+                        WHEN m.home_guild_id = $1 AND m.home_score > m.away_score THEN 1
+                        WHEN m.away_guild_id = $1 AND m.away_score > m.home_score THEN 1
+                        ELSE 0 END) AS wins,
+                SUM(CASE WHEN m.home_score = m.away_score THEN 1 ELSE 0 END) AS draws,
+                SUM(CASE
+                        WHEN m.home_guild_id = $1 AND m.home_score < m.away_score THEN 1
+                        WHEN m.away_guild_id = $1 AND m.away_score < m.home_score THEN 1
+                        ELSE 0 END) AS losses,
+                COALESCE(SUM(CASE
+                        WHEN m.home_guild_id = $1 THEN m.home_score
+                        WHEN m.away_guild_id = $1 THEN m.away_score
+                        ELSE 0 END), 0) AS goals_for,
+                COALESCE(SUM(CASE
+                        WHEN m.home_guild_id = $1 THEN m.away_score
+                        WHEN m.away_guild_id = $1 THEN m.home_score
+                        ELSE 0 END), 0) AS goals_against
+            FROM MATCH_STATS m
+            WHERE m.home_guild_id = $1 OR m.away_guild_id = $1
+            """,
+            guild_id,
+        )
+
+        recent_matches = await conn.fetch(
+            """
+            SELECT
+                m.id,
+                m.datetime,
+                COALESCE(ht.guild_name, m.home_team_name) AS home_team_name,
+                COALESCE(at.guild_name, m.away_team_name) AS away_team_name,
+                COALESCE(ht.guild_icon, '') AS home_team_icon,
+                COALESCE(at.guild_icon, '') AS away_team_icon,
+                m.home_score,
+                m.away_score
+            FROM MATCH_STATS m
+            LEFT JOIN IOSCA_TEAMS ht ON ht.guild_id = m.home_guild_id
+            LEFT JOIN IOSCA_TEAMS at ON at.guild_id = m.away_guild_id
+            WHERE m.home_guild_id = $1 OR m.away_guild_id = $1
+            ORDER BY m.datetime DESC
+            LIMIT 20
+            """,
+            guild_id,
+        )
+
+    team_payload = _record_to_dict(team)
+    parsed_players: list[dict[str, Any]] = []
+    for member in roster:
+        discord_id = str(member.get("id")) if member.get("id") is not None else None
+        mapped = roster_players.get(discord_id) if discord_id else None
+        parsed_players.append(
+            {
+                "discord_id": discord_id,
+                "name": member.get("name") or (mapped.get("discord_name") if mapped else "Unknown"),
+                "steam_id": mapped.get("steam_id") if mapped else member.get("steam_id"),
+                "rating": mapped.get("rating") if mapped else None,
+                "avatar_url": mapped.get("avatar_url") if mapped else _default_discord_avatar(discord_id),
+            }
+        )
+
+    stats_payload = _record_to_dict(team_stats)
+    stats_payload["goal_diff"] = int(stats_payload.get("goals_for", 0) or 0) - int(stats_payload.get("goals_against", 0) or 0)
+
+    return {
+        "team": team_payload,
+        "players": parsed_players,
+        "stats": stats_payload,
+        "recent_matches": _records_to_dicts(recent_matches),
+    }
+
+
+@app.get("/api/servers")
+async def servers() -> dict[str, Any]:
+    async with db.acquire() as conn:
+        col_rows = await conn.fetch(
+            """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = 'ios_servers'
+            """
+        )
+        cols = {str(r.get("column_name")) for r in col_rows}
+        players_col = "current_players" if "current_players" in cols else None
+        map_col = "map_name" if "map_name" in cols else ("current_map" if "current_map" in cols else None)
+
+        select_players = f"{players_col}" if players_col else "NULL::integer AS current_players"
+        select_map = f"{map_col}" if map_col else "NULL::text AS map_name"
+        query = f"""
+            SELECT
+                id,
+                name,
+                address,
+                server_type,
+                is_active,
+                created_at,
+                updated_at,
+                {select_players},
+                {select_map}
+            FROM IOS_SERVERS
+            ORDER BY is_active DESC, name ASC
+        """
+        rows = await conn.fetch(query)
+
+    servers_payload = _records_to_dicts(rows)
+    for server in servers_payload:
+        address = server.get("address")
+        server["current_players"] = server.get("current_players")
+        server["map_name"] = server.get("map_name")
+        server["connect_link"] = f"steam://connect/{address}" if address else None
+    return {"servers": servers_payload}
+
+
+@app.get("/api/discord")
+async def discord_info() -> dict[str, Any]:
+    async with db.acquire() as conn:
+        guild = await conn.fetchrow(
+            """
+            SELECT guild_id, guild_name, results_channel, fixtures_channel, confirmed_channel, captains_channel
+            FROM MAIN_DISCORD
+            ORDER BY id ASC
+            LIMIT 1
+            """
+        )
+    return {
+        "discord_invite_url": settings.discord_invite_url,
+        "discord_rules_url": settings.discord_rules_url,
+        "discord_tutorial_url": settings.discord_tutorial_url,
+        "main_discord": _record_to_dict(guild),
+    }
+
+
+@app.post("/api/webhooks/events")
+async def webhook_events(request: Request) -> dict[str, Any]:
+    if not settings.webhook_enabled:
+        raise HTTPException(status_code=404, detail="Webhook endpoint disabled")
+
+    if settings.webhook_token:
+        token = request.headers.get("x-webhook-token")
+        if token != settings.webhook_token:
+            raise HTTPException(status_code=401, detail="Unauthorized webhook")
+
+    payload = await request.json()
+    event = {
+        "event": payload.get("event", "unknown"),
+        "payload": payload,
+        "ts": datetime.now(timezone.utc).isoformat(),
+    }
+    await ws_manager.broadcast(event)
+    return {"ok": True, "broadcasted": True}
+
+
+@app.websocket(settings.websocket_path)
+async def ws_live(websocket: WebSocket) -> None:
+    if not settings.websocket_enabled:
+        await websocket.close(code=1008)
+        return
+
+    await ws_manager.connect(websocket)
+    try:
+        await websocket.send_json({"event": "connected", "ts": datetime.now(timezone.utc).isoformat()})
+        while True:
+            _ = await websocket.receive_text()
+            await websocket.send_json({"event": "pong", "ts": datetime.now(timezone.utc).isoformat()})
+    except WebSocketDisconnect:
+        await ws_manager.disconnect(websocket)
+    except Exception:
+        await ws_manager.disconnect(websocket)
+        try:
+            await websocket.close()
+        except Exception:
+            pass
