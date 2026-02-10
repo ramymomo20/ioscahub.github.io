@@ -1,9 +1,24 @@
 (function () {
   function assertApiConfigured() {
-    const base = String(window.HUB_CONFIG?.API_BASE_URL || '');
+    const base = String(window.HUB_CONFIG?.API_BASE_URL || '').trim();
     if (!base || base.includes('YOUR-BACKEND-DOMAIN')) {
       throw new Error(
-        'Hub API URL is not configured. Set frontend/assets/js/config.js or open once with ?hub_api=https://your-api-domain/api'
+        'Hub API URL is not configured. Open once with ?hub_api=https://your-api-domain/api'
+      );
+    }
+
+    try {
+      const parsed = new URL(base);
+      const host = parsed.hostname.toLowerCase();
+      const path = parsed.pathname.replace(/\/+$/, '');
+
+      // Guard against accidental GitHub Pages/API misconfiguration.
+      if (host.endsWith('github.io') || path === '' || path === '/') {
+        throw new Error();
+      }
+    } catch (_) {
+      throw new Error(
+        'Invalid Hub API URL. Use full URL like https://your-api-domain/api (not a GitHub Pages URL).'
       );
     }
   }
@@ -30,13 +45,13 @@
     summary: () => request('/summary'),
     rankings: (limit) => request('/rankings', { limit }),
     players: (limit) => request('/players', { limit }),
-    player: (steamId) => request(`/players/${encodeURIComponent(steamId)}`),
+    player: (steamId) => request('/player', { steam_id: steamId }),
     matches: (limit) => request('/matches', { limit }),
-    match: (id) => request(`/matches/${encodeURIComponent(id)}`),
+    match: (id) => request('/match', { id }),
     tournaments: () => request('/tournaments'),
     tournament: (id) => request(`/tournaments/${encodeURIComponent(id)}`),
     teams: () => request('/teams'),
-    team: (guildId) => request(`/teams/${encodeURIComponent(guildId)}`),
+    team: (guildId) => request('/team', { guild_id: guildId }),
     servers: () => request('/servers'),
     discord: () => request('/discord')
   };

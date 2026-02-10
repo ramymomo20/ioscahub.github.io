@@ -7,6 +7,12 @@
     const data = await window.HubApi.rankings(500);
     const widgets = data.widgets || {};
     const players = data.players || [];
+    const fallbackAvatar = 'https://cdn.discordapp.com/embed/avatars/0.png';
+
+    function fmtRating(value) {
+      const n = Number(value);
+      return Number.isFinite(n) ? n.toFixed(2) : 'N/A';
+    }
 
     function widgetCard(label, item) {
       if (!item) return `<div class="stat"><div class="label">${esc(label)}</div><div class="value">N/A</div></div>`;
@@ -14,10 +20,10 @@
         <div class="stat">
           <div class="label">${esc(label)}</div>
           <div style="display:flex;align-items:center;gap:8px;margin-top:4px;">
-            <img class="avatar" src="${esc(item.avatar_url)}" alt="avatar">
+            <img class="avatar" src="${esc(item.avatar_url || item.avatar_fallback_url || fallbackAvatar)}" alt="avatar" onerror="this.onerror=null;this.src='${fallbackAvatar}';">
             <div>
               <div><a href="player.html?steam_id=${encodeURIComponent(item.steam_id)}">${esc(item.discord_name)}</a></div>
-              <div class="meta">${esc(item.position)} | Rating ${esc(item.rating)}</div>
+              <div class="meta">${esc(item.position)} | Rating ${esc(fmtRating(item.rating))}</div>
             </div>
           </div>
         </div>
@@ -44,12 +50,12 @@
                 <td>${i + 1}</td>
                 <td>
                   <span class="cell-inline">
-                    <img class="avatar" src="${esc(p.avatar_url)}" alt="avatar">
+                    <img class="avatar" src="${esc(p.avatar_url || p.avatar_fallback_url || fallbackAvatar)}" alt="avatar" onerror="this.onerror=null;this.src='${fallbackAvatar}';">
                     <a href="player.html?steam_id=${encodeURIComponent(p.steam_id)}">${esc(p.discord_name)}</a>
                   </span>
                 </td>
                 <td>${esc(p.position)}</td>
-                <td>${esc(p.rating)}</td>
+                <td>${esc(fmtRating(p.rating))}</td>
               </tr>
             `).join('')}
           </tbody>

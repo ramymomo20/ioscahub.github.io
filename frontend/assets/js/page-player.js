@@ -16,15 +16,21 @@
     const totals = data.totals || {};
     const recent = data.recent_matches || [];
     const team = data.team || {};
+    const fallbackAvatar = 'https://cdn.discordapp.com/embed/avatars/0.png';
+
+    function fmtRating(value) {
+      const n = Number(value);
+      return Number.isFinite(n) ? n.toFixed(2) : 'N/A';
+    }
 
     page.innerHTML = `
       <div class="grid cols-2">
         <div class="card" style="margin:0;">
           <div style="display:flex;align-items:center;gap:12px;">
-            <img src="${esc(p.avatar_url)}" alt="avatar" style="width:110px;height:110px;border-radius:50%;object-fit:cover;border:1px solid var(--line);">
+            <img src="${esc(p.avatar_url || p.avatar_fallback_url || fallbackAvatar)}" alt="avatar" style="width:110px;height:110px;border-radius:50%;object-fit:cover;border:1px solid var(--line);" onerror="this.onerror=null;this.src='${fallbackAvatar}';">
             <div>
               <h2 style="margin:0;">${esc(p.discord_name)}</h2>
-              <div class="meta">Position: ${esc(p.position)} | Rating: ${esc(p.rating)}</div>
+              <div class="meta">Position: ${esc(p.position)} | Rating: ${esc(fmtRating(p.rating))}</div>
               <div class="meta">Steam: ${esc(p.steam_id)}</div>
               ${p.steam_profile_url ? `<div><a target="_blank" rel="noreferrer" href="${esc(p.steam_profile_url)}">Open Steam profile</a></div>` : ''}
             </div>

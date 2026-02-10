@@ -2,7 +2,10 @@
 
 import asyncio
 import json
+import math
+import re
 from collections import defaultdict
+from decimal import Decimal
 from datetime import datetime, timezone
 from typing import Any
 
@@ -12,13 +15,40 @@ from fastapi.middleware.cors import CORSMiddleware
 from .config import settings
 from .db import db
 
+try:
+    from rcon.source import Client as RconClient
+    RCON_AVAILABLE = True
+except Exception:
+    RconClient = None
+    RCON_AVAILABLE = False
+
+JS_MAX_SAFE_INTEGER = 9007199254740991
+
 
 def _to_iso(value: Any) -> Any:
     if isinstance(value, datetime):
         if value.tzinfo is None:
             value = value.replace(tzinfo=timezone.utc)
         return value.isoformat()
+    if isinstance(value, Decimal):
+        if value.is_nan():
+            return None
+        return float(value)
+    if isinstance(value, float) and math.isnan(value):
+        return None
+    if isinstance(value, int) and abs(value) > JS_MAX_SAFE_INTEGER:
+        return str(value)
+    if isinstance(value, str) and value.strip().lower() == "nan":
+        return None
     return value
+
+
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: _json_safe(val) for key, val in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    return _to_iso(value)
 
 
 def _record_to_dict(row: Any) -> dict[str, Any]:
@@ -26,7 +56,7 @@ def _record_to_dict(row: Any) -> dict[str, Any]:
         return {}
     payload = dict(row)
     for key, value in list(payload.items()):
-        payload[key] = _to_iso(value)
+        payload[key] = _json_safe(value)
     return payload
 
 
@@ -55,6 +85,15 @@ def _default_discord_avatar(discord_id: Any) -> str:
     return f"https://cdn.discordapp.com/embed/avatars/{seed}.png"
 
 
+def _discord_avatar_url(discord_id: Any) -> str:
+    if discord_id is None:
+        return _default_discord_avatar(discord_id)
+    raw = str(discord_id).strip()
+    if not raw:
+        return _default_discord_avatar(discord_id)
+    return f"https://unavatar.io/discord/{raw}"
+
+
 def _steam_profile_url(steam_id: str | None) -> str | None:
     if not steam_id:
         return None
@@ -62,6 +101,50 @@ def _steam_profile_url(steam_id: str | None) -> str | None:
     if sid.isdigit() and len(sid) >= 16:
         return f"https://steamcommunity.com/profiles/{sid}"
     return f"https://steamcommunity.com/search/users/#text={sid}"
+
+
+def _parse_address(address: str) -> tuple[str, int] | None:
+    raw = str(address or "").strip()
+    if ":" not in raw:
+        return None
+    host, port_str = raw.rsplit(":", 1)
+    try:
+        return host.strip(), int(port_str.strip())
+    except Exception:
+        return None
+
+
+def _get_server_status_rcon_sync(address: str, password: str) -> dict[str, Any]:
+    if not RCON_AVAILABLE or not RconClient:
+        return {"offline": True}
+    parsed = _parse_address(address)
+    if not parsed:
+        return {"offline": True}
+
+    host, port = parsed
+    try:
+        with RconClient(host, port, passwd=password, timeout=2) as client:
+            response = str(client.run("status") or "")
+    except Exception:
+        return {"offline": True}
+
+    hostname_match = re.search(r"hostname:\s*(.+)", response)
+    map_match = re.search(r"map\s*:\s*([^\r\n]+)", response)
+    players_match = re.search(r"players\s*:\s*(\d+)\s+humans", response)
+    max_players_match = re.search(r"players\s*:\s*\d+\s+humans,\s*\d+\s+bots,\s*(\d+)\s+max", response)
+
+    return {
+        "offline": False,
+        "server_name": hostname_match.group(1).strip() if hostname_match else None,
+        "map_name": map_match.group(1).strip() if map_match else None,
+        "current_players": int(players_match.group(1)) if players_match else None,
+        "max_players": int(max_players_match.group(1)) if max_players_match else None,
+    }
+
+
+async def _get_server_status_rcon(address: str, password: str) -> dict[str, Any]:
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, _get_server_status_rcon_sync, address, password)
 
 
 class WSManager:
@@ -154,7 +237,7 @@ async def rankings(limit: int = Query(default=200, ge=1, le=2000)) -> dict[str, 
             WITH latest_pos AS (
                 SELECT DISTINCT ON (steam_id)
                     steam_id,
-                    NULLIF(position, '') AS position
+                    UPPER(NULLIF(TRIM(position), '')) AS position
                 FROM PLAYER_MATCH_DATA
                 WHERE position IS NOT NULL AND position <> ''
                 ORDER BY steam_id, updated_at DESC NULLS LAST, id DESC
@@ -163,11 +246,15 @@ async def rankings(limit: int = Query(default=200, ge=1, le=2000)) -> dict[str, 
                 p.steam_id,
                 p.discord_id,
                 p.discord_name,
-                COALESCE(lp.position, 'N/A') AS position,
-                COALESCE(p.rating, 5.0) AS rating,
+                lp.position,
+                p.rating,
                 p.rating_updated_at
             FROM IOSCA_PLAYERS p
-            LEFT JOIN latest_pos lp ON lp.steam_id = p.steam_id
+            JOIN latest_pos lp ON lp.steam_id = p.steam_id
+            WHERE p.discord_id IS NOT NULL
+              AND p.rating IS NOT NULL
+              AND p.rating::text <> 'NaN'
+              AND lp.position <> 'UNKNOWN'
             ORDER BY p.rating DESC NULLS LAST, p.discord_name ASC
             LIMIT $1
             """,
@@ -176,7 +263,8 @@ async def rankings(limit: int = Query(default=200, ge=1, le=2000)) -> dict[str, 
 
     players = _records_to_dicts(rows)
     for item in players:
-        item["avatar_url"] = _default_discord_avatar(item.get("discord_id"))
+        item["avatar_url"] = _discord_avatar_url(item.get("discord_id"))
+        item["avatar_fallback_url"] = _default_discord_avatar(item.get("discord_id"))
 
     def best_for(positions: set[str]) -> dict[str, Any] | None:
         for p in players:
@@ -203,7 +291,7 @@ async def players(limit: int = Query(default=500, ge=1, le=5000)) -> dict[str, A
             WITH latest_pos AS (
                 SELECT DISTINCT ON (steam_id)
                     steam_id,
-                    NULLIF(position, '') AS position
+                    UPPER(NULLIF(TRIM(position), '')) AS position
                 FROM PLAYER_MATCH_DATA
                 WHERE position IS NOT NULL AND position <> ''
                 ORDER BY steam_id, updated_at DESC NULLS LAST, id DESC
@@ -213,12 +301,15 @@ async def players(limit: int = Query(default=500, ge=1, le=5000)) -> dict[str, A
                 p.discord_id,
                 p.discord_name,
                 COALESCE(lp.position, 'N/A') AS position,
-                COALESCE(p.rating, 5.0) AS rating,
+                p.rating,
                 p.registered_at,
                 p.last_active
             FROM IOSCA_PLAYERS p
             LEFT JOIN latest_pos lp ON lp.steam_id = p.steam_id
-            ORDER BY p.discord_name ASC
+            WHERE p.discord_id IS NOT NULL
+              AND p.rating IS NOT NULL
+              AND p.rating::text <> 'NaN'
+            ORDER BY p.rating DESC NULLS LAST, p.discord_name ASC
             LIMIT $1
             """,
             limit,
@@ -226,7 +317,8 @@ async def players(limit: int = Query(default=500, ge=1, le=5000)) -> dict[str, A
 
     payload = _records_to_dicts(rows)
     for item in payload:
-        item["avatar_url"] = _default_discord_avatar(item.get("discord_id"))
+        item["avatar_url"] = _discord_avatar_url(item.get("discord_id"))
+        item["avatar_fallback_url"] = _default_discord_avatar(item.get("discord_id"))
         item["steam_profile_url"] = _steam_profile_url(item.get("steam_id"))
     return {"players": payload}
 
@@ -328,7 +420,8 @@ async def player_detail(steam_id: str) -> dict[str, Any]:
         )
 
     player_payload = _record_to_dict(player)
-    player_payload["avatar_url"] = _default_discord_avatar(player_payload.get("discord_id"))
+    player_payload["avatar_url"] = _discord_avatar_url(player_payload.get("discord_id"))
+    player_payload["avatar_fallback_url"] = _default_discord_avatar(player_payload.get("discord_id"))
     player_payload["steam_profile_url"] = _steam_profile_url(steam_id)
     return {
         "player": player_payload,
@@ -336,6 +429,11 @@ async def player_detail(steam_id: str) -> dict[str, Any]:
         "recent_matches": _records_to_dicts(recent),
         "team": _record_to_dict(team),
     }
+
+
+@app.get("/api/player")
+async def player_detail_query(steam_id: str = Query(..., min_length=1)) -> dict[str, Any]:
+    return await player_detail(steam_id)
 
 
 @app.get("/api/matches")
@@ -374,7 +472,12 @@ async def matches(limit: int = Query(default=250, ge=1, le=3000)) -> dict[str, A
 
 
 @app.get("/api/matches/{match_id}")
-async def match_detail(match_id: int) -> dict[str, Any]:
+async def match_detail(match_id: str) -> dict[str, Any]:
+    try:
+        match_pk = int(str(match_id).strip())
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid match id")
+
     async with db.acquire() as conn:
         row = await conn.fetchrow(
             """
@@ -393,7 +496,7 @@ async def match_detail(match_id: int) -> dict[str, Any]:
             LEFT JOIN TOURNAMENTS t ON t.id = tm.tournament_id
             WHERE m.id = $1
             """,
-            match_id,
+            match_pk,
         )
         if not row:
             raise HTTPException(status_code=404, detail="Match not found")
@@ -408,7 +511,7 @@ async def match_detail(match_id: int) -> dict[str, Any]:
             WHERE pmd.match_id = $1
             ORDER BY pmd.goals DESC, pmd.assists DESC, pmd.keeper_saves DESC, player_name ASC
             """,
-            match_id,
+            match_pk,
         )
 
     match_payload = _record_to_dict(row)
@@ -433,6 +536,11 @@ async def match_detail(match_id: int) -> dict[str, Any]:
             "neutral": grouped.get("neutral", []),
         },
     }
+
+
+@app.get("/api/match")
+async def match_detail_query(id: str = Query(..., min_length=1)) -> dict[str, Any]:
+    return await match_detail(id)
 
 
 @app.get("/api/tournaments")
@@ -567,9 +675,10 @@ async def teams() -> dict[str, Any]:
 
 
 @app.get("/api/teams/{guild_id}")
-async def team_detail(guild_id: int) -> dict[str, Any]:
+async def team_detail(guild_id: str) -> dict[str, Any]:
+    guild_id = str(guild_id).strip()
     async with db.acquire() as conn:
-        team = await conn.fetchrow("SELECT * FROM IOSCA_TEAMS WHERE guild_id = $1", guild_id)
+        team = await conn.fetchrow("SELECT * FROM IOSCA_TEAMS WHERE guild_id::text = $1", guild_id)
         if not team:
             raise HTTPException(status_code=404, detail="Team not found")
 
@@ -599,7 +708,8 @@ async def team_detail(guild_id: int) -> dict[str, Any]:
             )
             for row in rows:
                 item = _record_to_dict(row)
-                item["avatar_url"] = _default_discord_avatar(item.get("discord_id"))
+                item["avatar_url"] = _discord_avatar_url(item.get("discord_id"))
+                item["avatar_fallback_url"] = _default_discord_avatar(item.get("discord_id"))
                 roster_players[str(item.get("discord_id"))] = item
 
         team_stats = await conn.fetchrow(
@@ -607,24 +717,24 @@ async def team_detail(guild_id: int) -> dict[str, Any]:
             SELECT
                 COUNT(*) AS matches_played,
                 SUM(CASE
-                        WHEN m.home_guild_id = $1 AND m.home_score > m.away_score THEN 1
-                        WHEN m.away_guild_id = $1 AND m.away_score > m.home_score THEN 1
+                        WHEN m.home_guild_id::text = $1 AND m.home_score > m.away_score THEN 1
+                        WHEN m.away_guild_id::text = $1 AND m.away_score > m.home_score THEN 1
                         ELSE 0 END) AS wins,
                 SUM(CASE WHEN m.home_score = m.away_score THEN 1 ELSE 0 END) AS draws,
                 SUM(CASE
-                        WHEN m.home_guild_id = $1 AND m.home_score < m.away_score THEN 1
-                        WHEN m.away_guild_id = $1 AND m.away_score < m.home_score THEN 1
+                        WHEN m.home_guild_id::text = $1 AND m.home_score < m.away_score THEN 1
+                        WHEN m.away_guild_id::text = $1 AND m.away_score < m.home_score THEN 1
                         ELSE 0 END) AS losses,
                 COALESCE(SUM(CASE
-                        WHEN m.home_guild_id = $1 THEN m.home_score
-                        WHEN m.away_guild_id = $1 THEN m.away_score
+                        WHEN m.home_guild_id::text = $1 THEN m.home_score
+                        WHEN m.away_guild_id::text = $1 THEN m.away_score
                         ELSE 0 END), 0) AS goals_for,
                 COALESCE(SUM(CASE
-                        WHEN m.home_guild_id = $1 THEN m.away_score
-                        WHEN m.away_guild_id = $1 THEN m.home_score
+                        WHEN m.home_guild_id::text = $1 THEN m.away_score
+                        WHEN m.away_guild_id::text = $1 THEN m.home_score
                         ELSE 0 END), 0) AS goals_against
             FROM MATCH_STATS m
-            WHERE m.home_guild_id = $1 OR m.away_guild_id = $1
+            WHERE m.home_guild_id::text = $1 OR m.away_guild_id::text = $1
             """,
             guild_id,
         )
@@ -643,7 +753,7 @@ async def team_detail(guild_id: int) -> dict[str, Any]:
             FROM MATCH_STATS m
             LEFT JOIN IOSCA_TEAMS ht ON ht.guild_id = m.home_guild_id
             LEFT JOIN IOSCA_TEAMS at ON at.guild_id = m.away_guild_id
-            WHERE m.home_guild_id = $1 OR m.away_guild_id = $1
+            WHERE m.home_guild_id::text = $1 OR m.away_guild_id::text = $1
             ORDER BY m.datetime DESC
             LIMIT 20
             """,
@@ -661,7 +771,8 @@ async def team_detail(guild_id: int) -> dict[str, Any]:
                 "name": member.get("name") or (mapped.get("discord_name") if mapped else "Unknown"),
                 "steam_id": mapped.get("steam_id") if mapped else member.get("steam_id"),
                 "rating": mapped.get("rating") if mapped else None,
-                "avatar_url": mapped.get("avatar_url") if mapped else _default_discord_avatar(discord_id),
+                "avatar_url": mapped.get("avatar_url") if mapped else _discord_avatar_url(discord_id),
+                "avatar_fallback_url": mapped.get("avatar_fallback_url") if mapped else _default_discord_avatar(discord_id),
             }
         )
 
@@ -674,6 +785,11 @@ async def team_detail(guild_id: int) -> dict[str, Any]:
         "stats": stats_payload,
         "recent_matches": _records_to_dicts(recent_matches),
     }
+
+
+@app.get("/api/team")
+async def team_detail_query(guild_id: str = Query(..., min_length=1)) -> dict[str, Any]:
+    return await team_detail(guild_id)
 
 
 @app.get("/api/servers")
@@ -698,6 +814,7 @@ async def servers() -> dict[str, Any]:
                 id,
                 name,
                 address,
+                password,
                 server_type,
                 is_active,
                 created_at,
@@ -710,30 +827,47 @@ async def servers() -> dict[str, Any]:
         rows = await conn.fetch(query)
 
     servers_payload = _records_to_dicts(rows)
+    status_tasks: list[asyncio.Future] = []
+    status_index: list[int] = []
+    for idx, server in enumerate(servers_payload):
+        if (
+            server.get("is_active")
+            and server.get("address")
+            and server.get("password")
+            and RCON_AVAILABLE
+        ):
+            status_tasks.append(_get_server_status_rcon(server["address"], server["password"]))
+            status_index.append(idx)
+
+    if status_tasks:
+        results = await asyncio.gather(*status_tasks, return_exceptions=True)
+        for task_idx, result in enumerate(results):
+            payload_idx = status_index[task_idx]
+            if isinstance(result, Exception):
+                continue
+            servers_payload[payload_idx]["rcon_online"] = not bool(result.get("offline"))
+            if result.get("current_players") is not None:
+                servers_payload[payload_idx]["current_players"] = result.get("current_players")
+            if result.get("map_name"):
+                servers_payload[payload_idx]["map_name"] = result.get("map_name")
+            if result.get("max_players") is not None:
+                servers_payload[payload_idx]["max_players"] = result.get("max_players")
+
     for server in servers_payload:
         address = server.get("address")
         server["current_players"] = server.get("current_players")
         server["map_name"] = server.get("map_name")
         server["connect_link"] = f"steam://connect/{address}" if address else None
+        server.pop("password", None)
     return {"servers": servers_payload}
 
 
 @app.get("/api/discord")
 async def discord_info() -> dict[str, Any]:
-    async with db.acquire() as conn:
-        guild = await conn.fetchrow(
-            """
-            SELECT guild_id, guild_name, results_channel, fixtures_channel, confirmed_channel, captains_channel
-            FROM MAIN_DISCORD
-            ORDER BY id ASC
-            LIMIT 1
-            """
-        )
     return {
         "discord_invite_url": settings.discord_invite_url,
         "discord_rules_url": settings.discord_rules_url,
         "discord_tutorial_url": settings.discord_tutorial_url,
-        "main_discord": _record_to_dict(guild),
     }
 
 

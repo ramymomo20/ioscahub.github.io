@@ -16,6 +16,7 @@
     const stats = data.stats || {};
     const players = data.players || [];
     const recent = data.recent_matches || [];
+    const fallbackAvatar = 'https://cdn.discordapp.com/embed/avatars/0.png';
 
     page.innerHTML = `
       <div class="grid cols-2">
@@ -46,7 +47,7 @@
           ${players.length ? players.map((p) => `
             <div class="item">
               <span class="cell-inline">
-                <img class="avatar" src="${esc(p.avatar_url)}" alt="avatar">
+                <img class="avatar" src="${esc(p.avatar_url || p.avatar_fallback_url || fallbackAvatar)}" alt="avatar" onerror="this.onerror=null;this.src='${fallbackAvatar}';">
                 ${p.steam_id ? `<a href="player.html?steam_id=${encodeURIComponent(p.steam_id)}">${esc(p.name)}</a>` : esc(p.name)}
               </span>
               <div class="meta">Rating: ${esc(p.rating || 'N/A')} ${p.steam_id ? `| Steam: ${esc(p.steam_id)}` : ''}</div>

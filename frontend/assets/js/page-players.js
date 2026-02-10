@@ -6,6 +6,12 @@
   try {
     const data = await window.HubApi.players(2000);
     const players = data.players || [];
+    const fallbackAvatar = 'https://cdn.discordapp.com/embed/avatars/0.png';
+
+    function fmtRating(value) {
+      const n = Number(value);
+      return Number.isFinite(n) ? n.toFixed(2) : 'N/A';
+    }
 
     page.innerHTML = `
       <div class="table-wrap">
@@ -20,12 +26,12 @@
               <tr>
                 <td>
                   <span class="cell-inline">
-                    <img class="avatar" src="${esc(p.avatar_url)}" alt="avatar">
+                    <img class="avatar" src="${esc(p.avatar_url || p.avatar_fallback_url || fallbackAvatar)}" alt="avatar" onerror="this.onerror=null;this.src='${fallbackAvatar}';">
                     <a href="player.html?steam_id=${encodeURIComponent(p.steam_id)}">${esc(p.discord_name)}</a>
                   </span>
                 </td>
                 <td>${esc(p.position)}</td>
-                <td>${esc(p.rating)}</td>
+                <td>${esc(fmtRating(p.rating))}</td>
                 <td>${fmtDate(p.registered_at)}</td>
                 <td>${fmtDate(p.last_active)}</td>
               </tr>

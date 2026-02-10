@@ -26,7 +26,7 @@
           </tbody>
         </table>
       </div>
-      <div class="footer-note" style="margin-top:10px;">Live players/map placeholders are ready. Attach RCON poller to fill them.</div>
+      <div class="footer-note" style="margin-top:10px;">Live status now attempts RCON first, with DB values as fallback.</div>
     `;
   } catch (err) {
     showError(`Failed to load servers: ${err.message}`);
