@@ -4,7 +4,7 @@
   const page = byId('page');
 
   try {
-    const data = await window.HubApi.players(2000);
+    const data = await window.HubApi.players(1000);
     const players = data.players || [];
     const fallbackAvatar = 'https://cdn.discordapp.com/embed/avatars/0.png';
 
@@ -26,8 +26,8 @@
               <tr>
                 <td>
                   <span class="cell-inline">
-                    <img class="avatar" src="${esc(p.avatar_url || p.avatar_fallback_url || fallbackAvatar)}" alt="avatar" onerror="this.onerror=null;this.src='${fallbackAvatar}';">
-                    <a href="player.html?steam_id=${encodeURIComponent(p.steam_id)}">${esc(p.discord_name)}</a>
+                    <img class="avatar" src="${esc(p.display_avatar_url || p.steam_avatar_url || p.avatar_url || p.avatar_fallback_url || fallbackAvatar)}" alt="avatar" onerror="this.onerror=null;this.src='${fallbackAvatar}';">
+                    <a href="player.html?steam_id=${encodeURIComponent(p.steam_id)}">${esc(p.discord_name || p.steam_name || 'Unknown')}</a>
                   </span>
                 </td>
                 <td>${esc(p.position)}</td>

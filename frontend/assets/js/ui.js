@@ -56,7 +56,28 @@
     `;
   }
 
+  function ensureFavicon() {
+    const href = 'assets/icons/iosca-icon.png';
+    let icon = document.querySelector("link[rel='icon']");
+    if (!icon) {
+      icon = document.createElement('link');
+      icon.setAttribute('rel', 'icon');
+      document.head.appendChild(icon);
+    }
+    icon.setAttribute('type', 'image/png');
+    icon.setAttribute('href', href);
+
+    let apple = document.querySelector("link[rel='apple-touch-icon']");
+    if (!apple) {
+      apple = document.createElement('link');
+      apple.setAttribute('rel', 'apple-touch-icon');
+      document.head.appendChild(apple);
+    }
+    apple.setAttribute('href', href);
+  }
+
   function renderLayout(activePage, pageTitle) {
+    ensureFavicon();
     const root = byId('app');
     if (!root) return;
     root.innerHTML = `

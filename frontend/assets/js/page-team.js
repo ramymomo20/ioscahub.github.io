@@ -20,11 +20,11 @@
 
     page.innerHTML = `
       <div class="grid cols-2">
-        <div class="card" style="margin:0;">
-          <div style="display:flex;align-items:center;gap:12px;">
-            ${team.guild_icon ? `<img src="${esc(team.guild_icon)}" alt="team" style="width:120px;height:120px;border-radius:50%;object-fit:cover;border:1px solid var(--line);">` : ''}
-            <div>
-              <h2 style="margin:0;">${esc(team.guild_name)}</h2>
+        <div class="card team-hero-card" style="margin:0;">
+          <div class="team-head">
+            ${team.guild_icon ? `<img class="team-profile-logo" src="${esc(team.guild_icon)}" alt="team">` : ''}
+            <div class="team-details">
+              <h2>${esc(team.guild_name)}</h2>
               <div class="meta">Captain: ${esc(team.captain_name || 'N/A')}</div>
               <div class="meta">Average rating: ${esc(team.average_rating || 0)}</div>
               <div class="meta">Created: ${fmtDateTime(team.created_at)}</div>
@@ -47,7 +47,7 @@
           ${players.length ? players.map((p) => `
             <div class="item">
               <span class="cell-inline">
-                <img class="avatar" src="${esc(p.avatar_url || p.avatar_fallback_url || fallbackAvatar)}" alt="avatar" onerror="this.onerror=null;this.src='${fallbackAvatar}';">
+                <img class="avatar" src="${esc(p.display_avatar_url || p.steam_avatar_url || p.avatar_url || p.avatar_fallback_url || fallbackAvatar)}" alt="avatar" onerror="this.onerror=null;this.src='${fallbackAvatar}';">
                 ${p.steam_id ? `<a href="player.html?steam_id=${encodeURIComponent(p.steam_id)}">${esc(p.name)}</a>` : esc(p.name)}
               </span>
               <div class="meta">Rating: ${esc(p.rating || 'N/A')} ${p.steam_id ? `| Steam: ${esc(p.steam_id)}` : ''}</div>

@@ -14,8 +14,12 @@
     goal: "assets/icons/soccer-ball-icon.png",
     assist: "assets/icons/cleats-icon.png",
     save: "assets/icons/glove-icon.png",
+    tackle: "assets/icons/cleats-icon.png",
+    interception: "assets/icons/cleats-icon.png",
+    chance: "assets/icons/cleats-icon.png",
+    keypass: "assets/icons/cleats-icon.png",
     yellow: "assets/icons/yellow-card-icon.png",
-    red: "assets/icons/red-card-icon.png",
+    red: "assets/icons/red-card-icon.png"
   };
 
   const FORMATIONS = {
@@ -27,7 +31,7 @@
       { pos: "LB", x: 16, y: 62 },
       { pos: "CB", x: 50, y: 62 },
       { pos: "RB", x: 84, y: 62 },
-      { pos: "GK", x: 50, y: 86 },
+      { pos: "GK", x: 50, y: 86 }
     ],
     six: [
       { pos: "LW", x: 22, y: 22 },
@@ -35,25 +39,23 @@
       { pos: "CM", x: 50, y: 42 },
       { pos: "LB", x: 22, y: 64 },
       { pos: "RB", x: 78, y: 64 },
-      { pos: "GK", x: 50, y: 86 },
+      { pos: "GK", x: 50, y: 86 }
     ],
     five: [
       { pos: "CF", x: 50, y: 21 },
       { pos: "LM", x: 22, y: 42 },
       { pos: "RM", x: 78, y: 42 },
       { pos: "CB", x: 50, y: 64 },
-      { pos: "GK", x: 50, y: 86 },
-    ],
+      { pos: "GK", x: 50, y: 86 }
+    ]
   };
 
   function normName(name) {
-    return String(name || "")
-      .toLowerCase()
-      .replace(/[^a-z0-9]/g, "");
+    return String(name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
   }
 
   function safeName(player) {
-    return String(player?.player_name || player?.steam_id || "Unknown");
+    return String(player && (player.player_name || player.steam_id) || "Unknown");
   }
 
   function shortWhenLabel(dateValue) {
@@ -68,15 +70,17 @@
     return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
   }
 
-  function truncateName(name, max = 14) {
+  function truncateName(name, max) {
     const value = String(name || "");
-    if (value.length <= max) return value;
-    return `${value.slice(0, max - 1)}…`;
+    const limit = max || 14;
+    if (value.length <= limit) return value;
+    return value.slice(0, Math.max(1, limit - 3)) + "...";
   }
 
   function parseLineupEntries(lineupData) {
     const entries = [];
     if (!Array.isArray(lineupData)) return entries;
+
     for (const item of lineupData) {
       if (Array.isArray(item) && item.length >= 3) {
         const started = item.length >= 4 ? Boolean(item[3]) : true;
@@ -84,10 +88,11 @@
           pos: String(item[0] || "").toUpperCase(),
           name: String(item[1] || item[2] || "-"),
           steamId: String(item[2] || ""),
-          started,
+          started
         });
         continue;
       }
+
       if (!item || typeof item !== "object") continue;
       const pos = String(item.position || item.pos || item.slot || "").toUpperCase();
       if (!pos) continue;
@@ -96,35 +101,20 @@
         pos,
         name: String(item.name || item.player_name || item.discord_name || item.player || item.steam_id || "-"),
         steamId: String(item.steam_id || item.steamId || ""),
-        started,
+        started
       });
     }
+
     return entries;
   }
 
   function detectFormation(entries) {
     const started = entries.filter((entry) => entry.started !== false);
     const positions = new Set(started.map((entry) => entry.pos));
-    if (
-      positions.has("CF") &&
-      positions.has("LM") &&
-      positions.has("RM") &&
-      positions.has("CB") &&
-      positions.has("GK")
-    ) {
-      return "five";
-    }
-    if (
-      positions.has("LW") &&
-      positions.has("RW") &&
-      positions.has("CM") &&
-      positions.has("LB") &&
-      positions.has("RB") &&
-      positions.has("GK") &&
-      !positions.has("CF")
-    ) {
-      return "six";
-    }
+
+    if (positions.has("CF") && positions.has("LM") && positions.has("RM") && positions.has("CB") && positions.has("GK")) return "five";
+    if (positions.has("LW") && positions.has("RW") && positions.has("CM") && positions.has("LB") && positions.has("RB") && positions.has("GK") && !positions.has("CF")) return "six";
+
     if (started.length <= 5) return "five";
     if (started.length <= 6) return "six";
     return "eight";
@@ -132,55 +122,67 @@
 
   function buildEventLines(sideStats) {
     const lines = [];
-    for (const player of sideStats || []) {
-      const goals = Number(player?.goals || 0);
-      const assists = Number(player?.assists || 0);
-      const saves = Number(player?.keeper_saves || 0);
-      const yellows = Number(player?.yellow_cards || 0);
-      const reds = Number(player?.red_cards || 0);
-      const name = safeName(player);
 
-      if (goals > 0) lines.push({ kind: "goal", name, count: goals });
-      if (assists > 0) lines.push({ kind: "assist", name, count: assists });
-      if (saves > 0) lines.push({ kind: "save", name, count: saves });
-      if (yellows > 0) lines.push({ kind: "yellow", name, count: yellows });
-      if (reds > 0) lines.push({ kind: "red", name, count: reds });
+    for (const player of sideStats || []) {
+      const name = safeName(player);
+      const rows = [
+        ["goal", Number(player.goals || 0)],
+        ["assist", Number(player.assists || 0)],
+        ["save", Number(player.keeper_saves || 0)],
+        ["tackle", Number(player.tackles || 0)],
+        ["interception", Number(player.interceptions || 0)],
+        ["chance", Number(player.chances_created || 0)],
+        ["keypass", Number(player.key_passes || 0)],
+        ["yellow", Number(player.yellow_cards || 0)],
+        ["red", Number(player.red_cards || 0)]
+      ];
+
+      for (const row of rows) {
+        if (row[1] > 0) {
+          lines.push({ kind: row[0], name, count: row[1] });
+        }
+      }
     }
 
     lines.sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
     if (!lines.length) return [{ kind: "empty", label: "No key stats" }];
-    return lines.slice(0, 10);
+    return lines.slice(0, 12);
   }
 
   function eventLineHtml(item) {
     if (item.kind === "empty") {
-      return `<div class="match-event-line"><span class="meta">${esc(item.label)}</span></div>`;
+      return '<div class="match-event-line"><span class="meta">' + esc(item.label) + '</span></div>';
     }
+
     const icon = STAT_ICONS[item.kind] || STAT_ICONS.goal;
-    const cls = item.kind ? `match-event-line ${item.kind}` : "match-event-line";
-    const countText = item.count > 1 ? ` x${item.count}` : "";
+    const countText = item.count > 1 ? " x" + item.count : "";
     return `
-      <div class="${cls}">
-        <img class="event-icon" src="${icon}" alt="${item.kind}">
+      <div class="match-event-line ${esc(item.kind)}">
+        <img class="event-icon" src="${esc(icon)}" alt="${esc(item.kind)}">
         <span>${esc(item.name)}${esc(countText)}</span>
       </div>
     `;
   }
 
-  function teamLogo(url, alt) {
-    if (!url) return `<div class="match-team-logo"></div>`;
-    return `<img class="match-team-logo" src="${esc(url)}" alt="${esc(alt)}">`;
+  function teamLogo(url, teamName) {
+    const hasUrl = String(url || "").trim();
+    const fallback = /iosca/i.test(String(teamName || "")) ? "assets/icons/iosca-icon.png" : "";
+    const finalUrl = hasUrl || fallback;
+    if (!finalUrl) return '<div class="match-team-logo"></div>';
+    return `<img class="match-team-logo" src="${esc(finalUrl)}" alt="${esc(teamName || "Team")}">`;
   }
 
   function buildStatsLookup(sideStats) {
     const bySteam = new Map();
     const byName = new Map();
+
     for (const row of sideStats || []) {
-      const steamKey = String(row?.steam_id || "").trim();
+      const steamKey = String(row.steam_id || "").trim();
       if (steamKey) bySteam.set(steamKey, row);
-      const nameKey = normName(row?.player_name || "");
+      const nameKey = normName(row.player_name || "");
       if (nameKey) byName.set(nameKey, row);
     }
+
     return { bySteam, byName };
   }
 
@@ -195,19 +197,23 @@
 
   function playerStatChips(player) {
     if (!player) return "";
+
     const rows = [
       ["goal", Number(player.goals || 0)],
       ["assist", Number(player.assists || 0)],
       ["save", Number(player.keeper_saves || 0)],
+      ["tackle", Number(player.tackles || 0)],
+      ["interception", Number(player.interceptions || 0)],
+      ["keypass", Number(player.key_passes || 0)],
+      ["chance", Number(player.chances_created || 0)],
       ["red", Number(player.red_cards || 0)],
-      ["yellow", Number(player.yellow_cards || 0)],
+      ["yellow", Number(player.yellow_cards || 0)]
     ];
+
     const chips = rows
-      .filter(([, value]) => value > 0)
-      .map(
-        ([key, value]) =>
-          `<span class="pitch-stat-chip"><img src="${STAT_ICONS[key]}" alt="${key}"><em>${esc(value)}</em></span>`
-      );
+      .filter((row) => row[1] > 0)
+      .map((row) => `<span class="pitch-stat-chip"><img src="${esc(STAT_ICONS[row[0]])}" alt="${esc(row[0])}"><em>${esc(row[1])}</em></span>`);
+
     if (!chips.length) return "";
     return `<div class="pitch-player-stats">${chips.join("")}</div>`;
   }
@@ -218,41 +224,41 @@
     const started = entries.filter((entry) => entry.started !== false);
     const usedIndex = new Set();
 
-    const nodes = slots
-      .map((slot) => {
-        const matchIndex = started.findIndex(
-          (entry, idx) => !usedIndex.has(idx) && entry.pos === slot.pos
-        );
-        let entry = null;
-        if (matchIndex >= 0) {
-          usedIndex.add(matchIndex);
-          entry = started[matchIndex];
-        }
+    const nodes = slots.map((slot) => {
+      const matchIndex = started.findIndex((entry, idx) => !usedIndex.has(idx) && entry.pos === slot.pos);
+      let entry = null;
 
-        if (!entry) {
-          return `
-            <div class="pitch-player empty" style="left:${slot.x}%;top:${slot.y}%;">
-              <div class="pitch-jersey">${esc(slot.pos)}</div>
-              <div class="pitch-player-name">&nbsp;</div>
-            </div>
-          `;
-        }
+      if (matchIndex >= 0) {
+        usedIndex.add(matchIndex);
+        entry = started[matchIndex];
+      }
 
-        const stats = resolvePlayerStats(entry, lookup);
+      if (!entry) {
         return `
-          <div class="pitch-player" style="left:${slot.x}%;top:${slot.y}%;">
+          <div class="pitch-player empty" style="left:${slot.x}%;top:${slot.y}%;">
             <div class="pitch-jersey">${esc(slot.pos)}</div>
-            <div class="pitch-player-name">${esc(truncateName(entry.name, 16))}</div>
-            ${playerStatChips(stats)}
+            <div class="pitch-player-name">&nbsp;</div>
           </div>
         `;
-      })
-      .join("");
+      }
+
+      const stats = resolvePlayerStats(entry, lookup);
+      return `
+        <div class="pitch-player" style="left:${slot.x}%;top:${slot.y}%;">
+          <div class="pitch-jersey">${esc(slot.pos)}</div>
+          <div class="pitch-player-name">${esc(truncateName(entry.name, 16))}</div>
+          ${playerStatChips(stats)}
+        </div>
+      `;
+    }).join("");
+
+    const fallbackIcon = /iosca/i.test(String(teamName || "")) ? "assets/icons/iosca-icon.png" : "";
+    const headerIcon = String(teamIcon || "").trim() || fallbackIcon;
 
     return `
       <article class="pitch-card">
         <header class="pitch-header">
-          ${teamIcon ? `<img class="pitch-header-icon" src="${esc(teamIcon)}" alt="${esc(teamName)}">` : ""}
+          ${headerIcon ? `<img class="pitch-header-icon" src="${esc(headerIcon)}" alt="${esc(teamName)}">` : ""}
           <h3>${esc(teamName)}</h3>
         </header>
         <div class="pitch-surface">
@@ -270,30 +276,32 @@
 
   function computeMvp(allStats) {
     if (!allStats.length) return null;
-    const scored = allStats
-      .map((player) => {
-        const goals = Number(player.goals || 0);
-        const assists = Number(player.assists || 0);
-        const saves = Number(player.keeper_saves || 0);
-        const interceptions = Number(player.interceptions || 0);
-        const tackles = Number(player.tackles || 0);
-        const chances = Number(player.chances_created || 0);
-        const keyPasses = Number(player.key_passes || 0);
-        const reds = Number(player.red_cards || 0);
-        const yellows = Number(player.yellow_cards || 0);
-        const score =
-          goals * 4 +
-          assists * 3 +
-          saves * 1.7 +
-          interceptions * 1.25 +
-          tackles * 1.05 +
-          chances * 1.2 +
-          keyPasses * 1.0 -
-          reds * 3.4 -
-          yellows * 1.1;
-        return { ...player, _score: score };
-      })
-      .sort((a, b) => b._score - a._score);
+
+    const scored = allStats.map((player) => {
+      const goals = Number(player.goals || 0);
+      const assists = Number(player.assists || 0);
+      const saves = Number(player.keeper_saves || 0);
+      const interceptions = Number(player.interceptions || 0);
+      const tackles = Number(player.tackles || 0);
+      const chances = Number(player.chances_created || 0);
+      const keyPasses = Number(player.key_passes || 0);
+      const reds = Number(player.red_cards || 0);
+      const yellows = Number(player.yellow_cards || 0);
+
+      const score =
+        goals * 4 +
+        assists * 3 +
+        saves * 1.7 +
+        interceptions * 1.25 +
+        tackles * 1.05 +
+        chances * 1.2 +
+        keyPasses * 1.0 -
+        reds * 3.4 -
+        yellows * 1.1;
+
+      return { ...player, _score: score };
+    }).sort((a, b) => b._score - a._score);
+
     return scored[0] || null;
   }
 
@@ -302,22 +310,17 @@
     if (Number(player.goals || 0) >= 3) return "Hat-trick performance.";
 
     const metrics = [
-      ["goals", Number(player.goals || 0), "goals"],
-      ["assists", Number(player.assists || 0), "assists"],
-      ["interceptions", Number(player.interceptions || 0), "interceptions"],
-      ["tackles", Number(player.tackles || 0), "tackles"],
-      ["saves", Number(player.keeper_saves || 0), "saves"],
-      ["chances", Number(player.chances_created || 0), "chances created"],
-      ["key", Number(player.key_passes || 0), "key passes"],
-    ]
-      .filter(([, value]) => value > 0)
-      .sort((a, b) => b[1] - a[1]);
+      [Number(player.goals || 0), "goals"],
+      [Number(player.assists || 0), "assists"],
+      [Number(player.interceptions || 0), "interceptions"],
+      [Number(player.tackles || 0), "tackles"],
+      [Number(player.keeper_saves || 0), "saves"],
+      [Number(player.chances_created || 0), "chances created"],
+      [Number(player.key_passes || 0), "key passes"]
+    ].filter((row) => row[0] > 0).sort((a, b) => b[0] - a[0]);
 
     if (!metrics.length) return "Strong all-around impact for the match.";
-    return metrics
-      .slice(0, 3)
-      .map(([, value, label]) => `${value} ${label}`)
-      .join(" · ");
+    return metrics.slice(0, 3).map((row) => `${row[0]} ${row[1]}`).join(" | ");
   }
 
   function mvpWidgetHtml(mvp) {
@@ -338,7 +341,6 @@
 
     const playerName = safeName(mvp);
     const position = String(mvp.position || "N/A").toUpperCase();
-    const rating = Number(mvp._score || 0).toFixed(1);
 
     return `
       <section class="mvp-widget">
@@ -348,7 +350,6 @@
             <img src="assets/icons/gold-medal-icon.png" alt="MVP medal">
             <span>MVP</span>
           </div>
-          <div class="mvp-rating">${esc(rating)}</div>
         </div>
         <div class="mvp-name">${esc(playerName)}</div>
         <div class="mvp-sub">${esc(position)}</div>
@@ -361,9 +362,10 @@
     try {
       const data = await window.HubApi.match(matchId);
       const match = data.match || {};
-      const homeStats = data.player_stats?.home || [];
-      const awayStats = data.player_stats?.away || [];
-      const allStats = [...homeStats, ...awayStats, ...(data.player_stats?.neutral || [])];
+      const homeStats = data.player_stats && data.player_stats.home ? data.player_stats.home : [];
+      const awayStats = data.player_stats && data.player_stats.away ? data.player_stats.away : [];
+      const neutralStats = data.player_stats && data.player_stats.neutral ? data.player_stats.neutral : [];
+      const allStats = [...homeStats, ...awayStats, ...neutralStats];
 
       const competitionLabel = match.tournament_name || match.game_type || "Match";
       const matchDate = fmtDateTime(match.datetime);
@@ -380,7 +382,7 @@
       page.innerHTML = `
         <section class="match-panel">
           <div class="match-top-row">
-            <div class="left">${esc(competitionLabel)}${whenLabel ? ` · ${esc(whenLabel)}` : ""}</div>
+            <div class="left">${esc(competitionLabel)}${whenLabel ? ` - ${esc(whenLabel)}` : ""}</div>
             <div class="right">Full-time</div>
           </div>
 

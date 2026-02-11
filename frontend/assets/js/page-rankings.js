@@ -20,9 +20,9 @@
         <div class="stat">
           <div class="label">${esc(label)}</div>
           <div style="display:flex;align-items:center;gap:8px;margin-top:4px;">
-            <img class="avatar" src="${esc(item.avatar_url || item.avatar_fallback_url || fallbackAvatar)}" alt="avatar" onerror="this.onerror=null;this.src='${fallbackAvatar}';">
+            <img class="avatar" src="${esc(item.display_avatar_url || item.steam_avatar_url || item.avatar_url || item.avatar_fallback_url || fallbackAvatar)}" alt="avatar" onerror="this.onerror=null;this.src='${fallbackAvatar}';">
             <div>
-              <div><a href="player.html?steam_id=${encodeURIComponent(item.steam_id)}">${esc(item.discord_name)}</a></div>
+              <div><a href="player.html?steam_id=${encodeURIComponent(item.steam_id)}">${esc(item.discord_name || item.steam_name || 'Unknown')}</a></div>
               <div class="meta">${esc(item.position)} | Rating ${esc(fmtRating(item.rating))}</div>
             </div>
           </div>
@@ -50,8 +50,8 @@
                 <td>${i + 1}</td>
                 <td>
                   <span class="cell-inline">
-                    <img class="avatar" src="${esc(p.avatar_url || p.avatar_fallback_url || fallbackAvatar)}" alt="avatar" onerror="this.onerror=null;this.src='${fallbackAvatar}';">
-                    <a href="player.html?steam_id=${encodeURIComponent(p.steam_id)}">${esc(p.discord_name)}</a>
+                    <img class="avatar" src="${esc(p.display_avatar_url || p.steam_avatar_url || p.avatar_url || p.avatar_fallback_url || fallbackAvatar)}" alt="avatar" onerror="this.onerror=null;this.src='${fallbackAvatar}';">
+                    <a href="player.html?steam_id=${encodeURIComponent(p.steam_id)}">${esc(p.discord_name || p.steam_name || 'Unknown')}</a>
                   </span>
                 </td>
                 <td>${esc(p.position)}</td>

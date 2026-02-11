@@ -4,11 +4,14 @@ import asyncio
 import json
 import math
 import re
+import time
+import xml.etree.ElementTree as ET
 from collections import defaultdict
 from decimal import Decimal
 from datetime import datetime, timezone
 from typing import Any
 
+import requests
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -36,6 +39,9 @@ except Exception:
     A2S_AVAILABLE = False
 
 JS_MAX_SAFE_INTEGER = 9007199254740991
+STEAM_ID64_BASE = 76561197960265728
+STEAM_PROFILE_CACHE_TTL_SECONDS = 1800
+_steam_profile_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 
 
 def _to_iso(value: Any) -> Any:
@@ -110,10 +116,113 @@ def _discord_avatar_url(discord_id: Any) -> str:
 def _steam_profile_url(steam_id: str | None) -> str | None:
     if not steam_id:
         return None
+    steam64 = _steam_to_steam64(steam_id)
+    if steam64:
+        return f"https://steamcommunity.com/profiles/{steam64}"
     sid = str(steam_id).strip()
-    if sid.isdigit() and len(sid) >= 16:
-        return f"https://steamcommunity.com/profiles/{sid}"
     return f"https://steamcommunity.com/search/users/#text={sid}"
+
+
+def _steam_avatar_proxy_url(steam64: Any) -> str | None:
+    raw = str(steam64 or "").strip()
+    if not raw:
+        return None
+    return f"https://unavatar.io/steam/{raw}"
+
+
+def _steam_to_steam64(steam_id: Any) -> str | None:
+    raw = str(steam_id or "").strip()
+    if not raw:
+        return None
+    if raw.isdigit() and len(raw) >= 16:
+        return raw
+
+    # STEAM_X:Y:Z -> 64-bit ID
+    match = re.match(r"^STEAM_[0-5]:([0-1]):(\d+)$", raw, flags=re.IGNORECASE)
+    if match:
+        y = int(match.group(1))
+        z = int(match.group(2))
+        return str(STEAM_ID64_BASE + (z * 2) + y)
+
+    # [U:1:Z] -> 64-bit ID
+    match = re.match(r"^\[U:1:(\d+)\]$", raw, flags=re.IGNORECASE)
+    if match:
+        account_id = int(match.group(1))
+        return str(STEAM_ID64_BASE + account_id)
+
+    return None
+
+
+def _fetch_steam_profile_xml_sync(steam64: str) -> dict[str, Any]:
+    url = f"https://steamcommunity.com/profiles/{steam64}/?xml=1"
+    try:
+        resp = requests.get(url, timeout=4)
+        if resp.status_code != 200 or not resp.text:
+            return {}
+        root = ET.fromstring(resp.text)
+    except Exception:
+        return {}
+
+    def _text(tag: str) -> str | None:
+        node = root.find(tag)
+        if node is None or node.text is None:
+            return None
+        value = node.text.strip()
+        return value or None
+
+    return {
+        "steam_id64": _text("steamID64") or steam64,
+        "steam_name": _text("steamID"),
+        "steam_avatar_url": _text("avatarFull") or _text("avatarMedium") or _text("avatarIcon"),
+    }
+
+
+async def _get_steam_profile_data(steam_id: Any) -> dict[str, Any]:
+    steam64 = _steam_to_steam64(steam_id)
+    if not steam64:
+        return {}
+
+    now = time.time()
+    cached = _steam_profile_cache.get(steam64)
+    if cached and cached[0] > now:
+        return cached[1]
+
+    fetched = await asyncio.to_thread(_fetch_steam_profile_xml_sync, steam64)
+    payload = {
+        "steam_id64": steam64,
+        "steam_profile_url": f"https://steamcommunity.com/profiles/{steam64}",
+        "steam_name": fetched.get("steam_name"),
+        "steam_avatar_url": fetched.get("steam_avatar_url"),
+    }
+    _steam_profile_cache[steam64] = (now + STEAM_PROFILE_CACHE_TTL_SECONDS, payload)
+    return payload
+
+
+async def _enrich_players_with_steam(players: list[dict[str, Any]], *, max_items: int | None = None) -> None:
+    if not players:
+        return
+    count = len(players) if max_items is None else min(len(players), max_items)
+    subset = players[:count]
+    steam_payloads = await asyncio.gather(
+        *[_get_steam_profile_data(item.get("steam_id")) for item in subset],
+        return_exceptions=True,
+    )
+    for item, steam_data in zip(subset, steam_payloads):
+        if isinstance(steam_data, Exception) or not isinstance(steam_data, dict):
+            continue
+        steam64 = steam_data.get("steam_id64")
+        if steam64:
+            item["steam_id64"] = steam64
+        if steam_data.get("steam_profile_url"):
+            item["steam_profile_url"] = steam_data.get("steam_profile_url")
+        if steam_data.get("steam_name"):
+            item["steam_name"] = steam_data.get("steam_name")
+        steam_avatar_url = steam_data.get("steam_avatar_url") or _steam_avatar_proxy_url(steam64)
+        if steam_avatar_url:
+            item["steam_avatar_url"] = steam_avatar_url
+            item["display_avatar_url"] = steam_avatar_url
+        elif item.get("avatar_url"):
+            item["display_avatar_url"] = item.get("avatar_url")
 
 
 def _parse_address(address: str) -> tuple[str, int] | None:
@@ -306,6 +415,15 @@ async def rankings(limit: int = Query(default=200, ge=1, le=2000)) -> dict[str, 
     for item in players:
         item["avatar_url"] = _discord_avatar_url(item.get("discord_id"))
         item["avatar_fallback_url"] = _default_discord_avatar(item.get("discord_id"))
+        item["steam_profile_url"] = _steam_profile_url(item.get("steam_id"))
+        steam64 = _steam_to_steam64(item.get("steam_id"))
+        if steam64:
+            item["steam_id64"] = steam64
+            item["display_avatar_url"] = _steam_avatar_proxy_url(steam64)
+        else:
+            item["display_avatar_url"] = item["avatar_url"]
+
+    await _enrich_players_with_steam(players, max_items=300)
 
     def best_for(positions: set[str]) -> dict[str, Any] | None:
         for p in players:
@@ -361,6 +479,13 @@ async def players(limit: int = Query(default=500, ge=1, le=5000)) -> dict[str, A
         item["avatar_url"] = _discord_avatar_url(item.get("discord_id"))
         item["avatar_fallback_url"] = _default_discord_avatar(item.get("discord_id"))
         item["steam_profile_url"] = _steam_profile_url(item.get("steam_id"))
+        steam64 = _steam_to_steam64(item.get("steam_id"))
+        if steam64:
+            item["steam_id64"] = steam64
+            item["display_avatar_url"] = _steam_avatar_proxy_url(steam64)
+        else:
+            item["display_avatar_url"] = item["avatar_url"]
+    await _enrich_players_with_steam(payload, max_items=300)
     return {"players": payload}
 
 
@@ -418,12 +543,23 @@ async def player_detail(steam_id: str) -> dict[str, Any]:
         recent = await conn.fetch(
             """
             SELECT
-                pmd.match_id,
+                COALESCE(ms.match_id::text, ms.id::text) AS match_id,
                 ms.datetime,
                 COALESCE(ht.guild_name, ms.home_team_name) AS home_team_name,
                 COALESCE(at.guild_name, ms.away_team_name) AS away_team_name,
                 ms.home_score,
                 ms.away_score,
+                ms.game_type,
+                t.name AS tournament_name,
+                CASE WHEN tm.match_stats_id IS NOT NULL THEN TRUE ELSE FALSE END AS is_tournament,
+                CASE
+                    WHEN ms.home_score = ms.away_score THEN 'D'
+                    WHEN pmd.guild_id::text = ms.home_guild_id::text AND ms.home_score > ms.away_score THEN 'W'
+                    WHEN pmd.guild_id::text = ms.away_guild_id::text AND ms.away_score > ms.home_score THEN 'W'
+                    WHEN pmd.guild_id::text = ms.home_guild_id::text AND ms.home_score < ms.away_score THEN 'L'
+                    WHEN pmd.guild_id::text = ms.away_guild_id::text AND ms.away_score < ms.home_score THEN 'L'
+                    ELSE NULL
+                END AS result,
                 pmd.position,
                 pmd.goals,
                 pmd.assists,
@@ -437,13 +573,12 @@ async def player_detail(steam_id: str) -> dict[str, Any]:
             JOIN MATCH_STATS ms
               ON (
                    pmd.match_id::text = ms.match_id::text
-                   OR (
-                       pmd.match_id::text ~ '^[0-9]+$'
-                       AND pmd.match_id::bigint = ms.id::bigint
-                   )
+                   OR (CASE WHEN pmd.match_id::text ~ '^[0-9]+$' THEN pmd.match_id::bigint END) = ms.id::bigint
               )
             LEFT JOIN IOSCA_TEAMS ht ON ht.guild_id = ms.home_guild_id
             LEFT JOIN IOSCA_TEAMS at ON at.guild_id = ms.away_guild_id
+            LEFT JOIN TOURNAMENT_MATCHES tm ON tm.match_stats_id = ms.id
+            LEFT JOIN TOURNAMENTS t ON t.id = tm.tournament_id
             WHERE pmd.steam_id = $1
             ORDER BY ms.datetime DESC
             LIMIT 20
@@ -471,6 +606,17 @@ async def player_detail(steam_id: str) -> dict[str, Any]:
     player_payload["avatar_url"] = _discord_avatar_url(player_payload.get("discord_id"))
     player_payload["avatar_fallback_url"] = _default_discord_avatar(player_payload.get("discord_id"))
     player_payload["steam_profile_url"] = _steam_profile_url(steam_id)
+    player_payload["display_avatar_url"] = player_payload.get("avatar_url")
+    steam_data = await _get_steam_profile_data(steam_id)
+    steam64 = steam_data.get("steam_id64") or _steam_to_steam64(steam_id)
+    if steam64:
+        player_payload["steam_id64"] = steam64
+    if steam_data.get("steam_name"):
+        player_payload["steam_name"] = steam_data.get("steam_name")
+    steam_avatar_url = steam_data.get("steam_avatar_url") or _steam_avatar_proxy_url(steam64)
+    if steam_avatar_url:
+        player_payload["steam_avatar_url"] = steam_avatar_url
+        player_payload["display_avatar_url"] = steam_avatar_url
     return {
         "player": player_payload,
         "totals": _record_to_dict(totals),
@@ -560,10 +706,7 @@ async def match_detail(match_id: str) -> dict[str, Any]:
             FROM PLAYER_MATCH_DATA pmd
             LEFT JOIN IOSCA_PLAYERS ip ON ip.steam_id = pmd.steam_id
             WHERE pmd.match_id::text = $2::text
-               OR (
-                   pmd.match_id::text ~ '^[0-9]+$'
-                   AND pmd.match_id::bigint = $1::bigint
-               )
+               OR (CASE WHEN pmd.match_id::text ~ '^[0-9]+$' THEN pmd.match_id::bigint END) = $1::bigint
             ORDER BY pmd.goals DESC, pmd.assists DESC, pmd.keeper_saves DESC, player_name ASC
             """,
             row_id,
@@ -816,6 +959,7 @@ async def team_detail(guild_id: str) -> dict[str, Any]:
                 item["avatar_url"] = _discord_avatar_url(item.get("discord_id"))
                 item["avatar_fallback_url"] = _default_discord_avatar(item.get("discord_id"))
                 roster_players[str(item.get("discord_id"))] = item
+            await _enrich_players_with_steam(list(roster_players.values()), max_items=120)
 
         team_stats = await conn.fetchrow(
             """
@@ -870,14 +1014,25 @@ async def team_detail(guild_id: str) -> dict[str, Any]:
     for member in roster:
         discord_id = str(member.get("id")) if member.get("id") is not None else None
         mapped = roster_players.get(discord_id) if discord_id else None
+        member_steam_id = mapped.get("steam_id") if mapped else member.get("steam_id")
+        member_steam64 = _steam_to_steam64(member_steam_id)
+        member_avatar = (
+            mapped.get("display_avatar_url")
+            if mapped
+            else _steam_avatar_proxy_url(member_steam64) or _discord_avatar_url(discord_id)
+        )
         parsed_players.append(
             {
                 "discord_id": discord_id,
                 "name": member.get("name") or (mapped.get("discord_name") if mapped else "Unknown"),
-                "steam_id": mapped.get("steam_id") if mapped else member.get("steam_id"),
+                "steam_id": member_steam_id,
                 "rating": mapped.get("rating") if mapped else None,
                 "avatar_url": mapped.get("avatar_url") if mapped else _discord_avatar_url(discord_id),
+                "display_avatar_url": member_avatar,
                 "avatar_fallback_url": mapped.get("avatar_fallback_url") if mapped else _default_discord_avatar(discord_id),
+                "steam_profile_url": mapped.get("steam_profile_url") if mapped else _steam_profile_url(member_steam_id),
+                "steam_name": mapped.get("steam_name") if mapped else None,
+                "steam_avatar_url": mapped.get("steam_avatar_url") if mapped else _steam_avatar_proxy_url(member_steam64),
             }
         )
 
