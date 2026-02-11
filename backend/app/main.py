@@ -700,14 +700,24 @@ async def match_detail(match_id: str) -> dict[str, Any]:
         row_match_id = str(row.get("match_id") or "")
         stats = await conn.fetch(
             """
+            WITH dedup AS (
+                SELECT DISTINCT ON (pmd.steam_id, COALESCE(pmd.guild_id::text, ''))
+                    pmd.*
+                FROM PLAYER_MATCH_DATA pmd
+                WHERE pmd.match_id::text = $2::text
+                   OR (CASE WHEN pmd.match_id::text ~ '^[0-9]+$' THEN pmd.match_id::bigint END) = $1::bigint
+                ORDER BY
+                    pmd.steam_id,
+                    COALESCE(pmd.guild_id::text, ''),
+                    pmd.updated_at DESC NULLS LAST,
+                    pmd.id DESC
+            )
             SELECT
-                pmd.*,
-                COALESCE(ip.discord_name, pmd.steam_id) AS player_name
-            FROM PLAYER_MATCH_DATA pmd
-            LEFT JOIN IOSCA_PLAYERS ip ON ip.steam_id = pmd.steam_id
-            WHERE pmd.match_id::text = $2::text
-               OR (CASE WHEN pmd.match_id::text ~ '^[0-9]+$' THEN pmd.match_id::bigint END) = $1::bigint
-            ORDER BY pmd.goals DESC, pmd.assists DESC, pmd.keeper_saves DESC, player_name ASC
+                d.*,
+                COALESCE(ip.discord_name, d.steam_id) AS player_name
+            FROM dedup d
+            LEFT JOIN IOSCA_PLAYERS ip ON ip.steam_id = d.steam_id
+            ORDER BY d.goals DESC, d.assists DESC, d.keeper_saves DESC, player_name ASC
             """,
             row_id,
             row_match_id,
@@ -948,9 +958,23 @@ async def team_detail(guild_id: str) -> dict[str, Any]:
         if discord_ids:
             rows = await conn.fetch(
                 """
-                SELECT steam_id, discord_id, discord_name, rating
-                FROM IOSCA_PLAYERS
-                WHERE discord_id::text = ANY($1::text[])
+                WITH latest_pos AS (
+                    SELECT DISTINCT ON (steam_id)
+                        steam_id,
+                        UPPER(NULLIF(TRIM(position), '')) AS position
+                    FROM PLAYER_MATCH_DATA
+                    WHERE position IS NOT NULL AND position <> ''
+                    ORDER BY steam_id, updated_at DESC NULLS LAST, id DESC
+                )
+                SELECT
+                    p.steam_id,
+                    p.discord_id,
+                    p.discord_name,
+                    p.rating,
+                    COALESCE(lp.position, 'N/A') AS position
+                FROM IOSCA_PLAYERS p
+                LEFT JOIN latest_pos lp ON lp.steam_id = p.steam_id
+                WHERE p.discord_id::text = ANY($1::text[])
                 """,
                 discord_ids,
             )
@@ -1027,6 +1051,7 @@ async def team_detail(guild_id: str) -> dict[str, Any]:
                 "name": member.get("name") or (mapped.get("discord_name") if mapped else "Unknown"),
                 "steam_id": member_steam_id,
                 "rating": mapped.get("rating") if mapped else None,
+                "position": mapped.get("position") if mapped else "N/A",
                 "avatar_url": mapped.get("avatar_url") if mapped else _discord_avatar_url(discord_id),
                 "display_avatar_url": member_avatar,
                 "avatar_fallback_url": mapped.get("avatar_fallback_url") if mapped else _default_discord_avatar(discord_id),

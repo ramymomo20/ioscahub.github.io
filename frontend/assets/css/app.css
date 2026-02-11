@@ -32,9 +32,32 @@ body {
 body {
   min-height: 100vh;
   background:
-    radial-gradient(780px 420px at -10% -10%, rgba(40, 104, 220, 0.22), transparent 62%),
-    radial-gradient(900px 500px at 110% -8%, rgba(39, 195, 255, 0.16), transparent 58%),
-    linear-gradient(170deg, #050b1a 0%, #061128 42%, #050a19 100%);
+    radial-gradient(780px 420px at -10% -10%, rgba(40, 104, 220, 0.28), transparent 62%),
+    radial-gradient(900px 500px at 110% -8%, rgba(39, 195, 255, 0.22), transparent 58%),
+    radial-gradient(560px 280px at 22% 68%, rgba(106, 195, 255, 0.14), transparent 72%),
+    radial-gradient(620px 300px at 88% 84%, rgba(74, 184, 255, 0.12), transparent 74%),
+    linear-gradient(170deg, #050b1a 0%, #061128 38%, #08173a 62%, #050a19 100%);
+}
+
+body::before,
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
+}
+
+body::before {
+  background:
+    radial-gradient(240px 120px at 14% 22%, rgba(124, 242, 255, 0.08), transparent 72%),
+    radial-gradient(220px 110px at 76% 34%, rgba(91, 170, 255, 0.09), transparent 70%),
+    radial-gradient(260px 130px at 64% 72%, rgba(103, 220, 255, 0.06), transparent 75%);
+  filter: blur(1px);
+}
+
+body::after {
+  background: linear-gradient(transparent 0%, rgba(3, 8, 20, 0.12) 100%);
 }
 
 a {
@@ -53,6 +76,20 @@ a:hover {
   backdrop-filter: blur(14px);
   background: linear-gradient(180deg, rgba(4, 10, 22, 0.9), rgba(6, 14, 31, 0.78));
   border-bottom: 1px solid var(--line-soft);
+}
+
+.header::after {
+  content: "";
+  display: block;
+  height: 2px;
+  background: linear-gradient(
+    90deg,
+    rgba(124, 242, 255, 0.0),
+    rgba(124, 242, 255, 0.7) 18%,
+    rgba(104, 177, 255, 0.75) 48%,
+    rgba(124, 242, 255, 0.7) 78%,
+    rgba(124, 242, 255, 0.0)
+  );
 }
 
 .header-inner {
@@ -103,6 +140,7 @@ a:hover {
   font-weight: 600;
   border: 1px solid transparent;
   transition: color 180ms ease, border-color 180ms ease, background 180ms ease, transform 180ms ease;
+  --nav-accent: var(--accent-2);
 }
 
 .nav-link::after {
@@ -111,9 +149,9 @@ a:hover {
   left: 11px;
   right: 11px;
   bottom: 5px;
-  height: 2px;
+  height: 3px;
   border-radius: 2px;
-  background: linear-gradient(90deg, transparent, var(--accent-2), transparent);
+  background: linear-gradient(90deg, transparent, var(--nav-accent), transparent);
   transform: scaleX(0);
   transform-origin: center;
   transition: transform 180ms ease;
@@ -122,10 +160,11 @@ a:hover {
 .nav-link:hover,
 .nav-link.active {
   color: var(--text);
-  border-color: var(--line-soft);
+  border-color: var(--nav-accent);
   background: linear-gradient(180deg, rgba(44, 94, 186, 0.24), rgba(9, 29, 65, 0.16));
   text-decoration: none;
   transform: translateY(-1px);
+  box-shadow: 0 8px 20px rgba(10, 28, 59, 0.38), 0 0 0 1px var(--nav-accent) inset;
 }
 
 .nav-link:hover::after,
@@ -883,6 +922,33 @@ tbody tr:hover {
   line-height: 1.35;
 }
 
+.player-role-rating {
+  margin-top: 8px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.player-role-rating .role-box {
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  background: linear-gradient(180deg, rgba(29, 53, 96, 0.88), rgba(16, 31, 61, 0.92));
+  padding: 8px 10px;
+}
+
+.player-role-rating .role-box .k {
+  color: #bcd6fa;
+  font-size: 0.86rem;
+}
+
+.player-role-rating .role-box .v {
+  margin-top: 2px;
+  color: #ecf5ff;
+  font-size: 1.2rem;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+}
+
 .profile-details .profile-link {
   margin-top: 4px;
   font-size: 1rem;
@@ -916,6 +982,161 @@ tbody tr:hover {
 .team-details .meta {
   font-size: 1.05rem;
   line-height: 1.35;
+}
+
+.team-highlight-grid {
+  margin-top: 8px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.team-highlight {
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: linear-gradient(180deg, rgba(30, 57, 98, 0.9), rgba(14, 29, 59, 0.94));
+}
+
+.team-highlight .k {
+  color: #bcd6fa;
+  font-size: 0.86rem;
+}
+
+.team-highlight .v {
+  margin-top: 2px;
+  color: #ecf5ff;
+  font-size: 1.16rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.roster-groups {
+  display: grid;
+  gap: 10px;
+}
+
+.roster-group {
+  border: 1px solid var(--line-soft);
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(16, 29, 55, 0.95), rgba(11, 20, 42, 0.94));
+  padding: 10px;
+}
+
+.roster-group-head {
+  margin: 0 0 8px;
+  font-family: "Orbitron", "Rajdhani", sans-serif;
+  letter-spacing: 0.3px;
+  font-size: 1rem;
+}
+
+.roster-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.roster-player {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: 12px;
+  padding: 8px 10px;
+  background: linear-gradient(180deg, rgba(20, 36, 66, 0.9), rgba(12, 24, 46, 0.93));
+}
+
+.roster-gk {
+  border-left: 3px solid rgba(102, 220, 255, 0.7);
+}
+
+.roster-def {
+  border-left: 3px solid rgba(93, 226, 165, 0.65);
+}
+
+.roster-mid {
+  border-left: 3px solid rgba(170, 150, 255, 0.68);
+}
+
+.roster-att {
+  border-left: 3px solid rgba(255, 167, 112, 0.66);
+}
+
+.roster-other {
+  border-left: 3px solid rgba(176, 198, 237, 0.56);
+}
+
+.roster-avatar {
+  width: 52px;
+  height: 52px;
+  border-radius: 10px;
+  object-fit: cover;
+  background: #061028;
+  border: 1px solid rgba(160, 195, 255, 0.34);
+}
+
+.roster-info {
+  min-width: 0;
+}
+
+.roster-name {
+  font-size: 1.08rem;
+  line-height: 1.15;
+  font-weight: 700;
+  margin-bottom: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.roster-meta {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.roster-sub {
+  margin-top: 3px;
+  color: #a8bcdf;
+  font-size: 0.84rem;
+}
+
+.pos-chip,
+.rating-chip {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  padding: 2px 7px;
+  font-size: 0.78rem;
+  line-height: 1;
+  background: rgba(12, 22, 43, 0.75);
+}
+
+.pos-gk {
+  color: #a3eaff;
+  border-color: rgba(102, 220, 255, 0.55);
+}
+
+.pos-def {
+  color: #9df7cb;
+  border-color: rgba(93, 226, 165, 0.52);
+}
+
+.pos-mid {
+  color: #d2c4ff;
+  border-color: rgba(170, 150, 255, 0.52);
+}
+
+.pos-att {
+  color: #ffd1b4;
+  border-color: rgba(255, 167, 112, 0.5);
+}
+
+.pos-other {
+  color: #d3e2ff;
+  border-color: rgba(176, 198, 237, 0.48);
 }
 
 .error {
@@ -965,6 +1186,10 @@ tbody tr:hover {
   .grid.cols-3,
   .grid.cols-2,
   .grid.cols-4 {
+    grid-template-columns: 1fr;
+  }
+
+  .roster-grid {
     grid-template-columns: 1fr;
   }
 

@@ -28,14 +28,14 @@
 
   function navTemplate(activePage) {
     const links = [
-      ['index.html', 'Home'],
-      ['rankings.html', 'Rankings'],
-      ['players.html', 'Players'],
-      ['matches.html', 'Matches'],
-      ['tournaments.html', 'Tournaments'],
-      ['teams.html', 'Teams'],
-      ['servers.html', 'Servers'],
-      ['discord.html', 'Discord']
+      ['index.html', 'Home', 'home', '#7cf2ff'],
+      ['rankings.html', 'Rankings', 'rankings', '#76b8ff'],
+      ['players.html', 'Players', 'players', '#5de2a5'],
+      ['matches.html', 'Matches', 'matches', '#9ac6ff'],
+      ['tournaments.html', 'Tournaments', 'tournaments', '#86f0ff'],
+      ['teams.html', 'Teams', 'teams', '#89a8ff'],
+      ['servers.html', 'Servers', 'servers', '#7cdcff'],
+      ['discord.html', 'Discord', 'discord', '#8be4ff']
     ];
 
     return `
@@ -46,9 +46,9 @@
             IOSCA Hub
           </a>
           <nav class="nav">
-            ${links.map(([href, label]) => {
+            ${links.map(([href, label, key, accent]) => {
               const active = activePage === href ? 'active' : '';
-              return `<a class="nav-link ${active}" href="${href}">${label}</a>`;
+              return `<a class="nav-link nav-${key} ${active}" style="--nav-accent:${accent};" href="${href}">${label}</a>`;
             }).join('')}
           </nav>
         </div>

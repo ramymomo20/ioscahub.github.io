@@ -55,7 +55,16 @@
             <img class="profile-avatar-lg" src="${esc(p.display_avatar_url || p.steam_avatar_url || p.avatar_url || p.avatar_fallback_url || fallbackAvatar)}" alt="avatar" onerror="this.onerror=null;this.src='${fallbackAvatar}';">
             <div class="profile-details">
               <h2>${esc(p.discord_name || p.steam_name || 'Unknown')}</h2>
-              <div class="meta">Position: ${esc(p.position)} | Rating: ${esc(fmtRating(p.rating))}</div>
+              <div class="player-role-rating">
+                <div class="role-box">
+                  <div class="k">Position</div>
+                  <div class="v">${esc(p.position || 'N/A')}</div>
+                </div>
+                <div class="role-box">
+                  <div class="k">Rating</div>
+                  <div class="v">${esc(fmtRating(p.rating))}</div>
+                </div>
+              </div>
               <div class="meta">Steam: ${esc(p.steam_id)}${p.steam_name ? ` | ${esc(p.steam_name)}` : ''}</div>
               ${p.steam_profile_url ? `<div class="profile-link"><a target="_blank" rel="noreferrer" href="${esc(p.steam_profile_url)}">Open Steam profile</a></div>` : ''}
             </div>
@@ -79,17 +88,18 @@
         <h3>Recent matches</h3>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Date</th><th>Match</th><th>Position</th><th>Stats</th><th>Competition</th></tr></thead>
+            <thead><tr><th style="width:72px;">Result</th><th>Date</th><th>Match</th><th>Position</th><th>Stats</th><th>Competition</th></tr></thead>
             <tbody>
               ${recent.length ? recent.map((m) => `
                 <tr>
-                  <td>${resultTag(m.result)} ${fmtDateTime(m.datetime)}</td>
+                  <td style="width:72px;">${resultTag(m.result)}</td>
+                  <td>${fmtDateTime(m.datetime)}</td>
                   <td><a href="match.html?id=${esc(m.match_id)}">${esc(m.home_team_name)} ${esc(m.home_score)} - ${esc(m.away_score)} ${esc(m.away_team_name)}</a></td>
                   <td>${esc(m.position || 'N/A')}</td>
                   <td>${esc(statSummary(m))}</td>
                   <td>${esc(competitionLabel(m))}</td>
                 </tr>
-              `).join('') : '<tr><td colspan="5">No matches</td></tr>'}
+              `).join('') : '<tr><td colspan="6">No matches</td></tr>'}
             </tbody>
           </table>
         </div>

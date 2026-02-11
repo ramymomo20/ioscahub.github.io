@@ -5,7 +5,7 @@
 
   try {
     const data = await window.HubApi.teams();
-    const rows = data.teams || [];
+    const rows = (data.teams || []).filter((t) => String(t.guild_icon || '').trim());
 
     page.innerHTML = `
       <div class="table-wrap">
@@ -14,7 +14,7 @@
             <tr><th>Team</th><th>Captain</th><th>Players</th><th>Rating</th><th>Updated</th></tr>
           </thead>
           <tbody>
-            ${rows.map((t) => `
+            ${rows.length ? rows.map((t) => `
               <tr>
                 <td>
                   <span class="cell-inline">
@@ -27,7 +27,7 @@
                 <td>${esc(t.average_rating || 0)}</td>
                 <td>${fmtDateTime(t.updated_at)}</td>
               </tr>
-            `).join('')}
+            `).join('') : '<tr><td colspan="5">No teams with logos available yet.</td></tr>'}
           </tbody>
         </table>
       </div>
