@@ -121,41 +121,81 @@
   function buildEventLines(sideStats) {
     const lines = [];
 
+    function parseMinutes(raw) {
+      if (!Array.isArray(raw)) return [];
+      const mins = raw
+        .map((v) => {
+          const n = Number(v);
+          return Number.isFinite(n) ? Math.max(1, Math.floor(n)) : null;
+        })
+        .filter((v) => v !== null);
+      return [...new Set(mins)].sort((a, b) => a - b);
+    }
+
+    function getEventMap(player) {
+      let raw = player && (player.event_timestamps ?? player.eventTimestamps) || {};
+      if (typeof raw === "string") {
+        try {
+          raw = JSON.parse(raw);
+        } catch (_) {
+          raw = {};
+        }
+      }
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+      return raw;
+    }
+
+    function getMinutes(eventMap, keys) {
+      for (const key of keys) {
+        const mins = parseMinutes(eventMap[key]);
+        if (mins.length) return mins;
+      }
+      return [];
+    }
+
     for (const player of sideStats || []) {
       const name = safeName(player);
-      const rows = [
-        ["goal", Number(player.goals || 0)],
-        ["assist", Number(player.assists || 0)],
-        ["save", Number(player.keeper_saves || 0)],
-        ["tackle", Number(player.tackles || 0)],
-        ["interception", Number(player.interceptions || 0)],
-        ["yellow", Number(player.yellow_cards || 0)],
-        ["red", Number(player.red_cards || 0)]
-      ];
+      const eventMap = getEventMap(player);
 
-      for (const row of rows) {
-        if (row[1] > 0) {
-          lines.push({ kind: row[0], name, count: row[1], metric: STAT_META[row[0]] ? STAT_META[row[0]].label : row[0] });
-        }
+      const goalMinutes = getMinutes(eventMap, ["goal", "goals"]);
+      if (goalMinutes.length) {
+        lines.push({ kind: "goal", name, minutes: goalMinutes, sortMinute: goalMinutes[0] });
+      } else {
+        const count = Number(player.goals || 0);
+        if (count > 0) lines.push({ kind: "goal", name, count, sortMinute: 999 });
+      }
+
+      const yellowMinutes = getMinutes(eventMap, ["yellow", "yellow_card", "yellow_cards"]);
+      if (yellowMinutes.length) {
+        lines.push({ kind: "yellow", name, minutes: yellowMinutes, sortMinute: yellowMinutes[0] });
+      } else {
+        const count = Number(player.yellow_cards || player.yellowCards || 0);
+        if (count > 0) lines.push({ kind: "yellow", name, count, sortMinute: 999 });
+      }
+
+      const redMinutes = getMinutes(eventMap, ["red", "red_card", "red_cards"]);
+      if (redMinutes.length) {
+        lines.push({ kind: "red", name, minutes: redMinutes, sortMinute: redMinutes[0] });
+      } else {
+        const count = Number(player.red_cards || player.redCards || 0);
+        if (count > 0) lines.push({ kind: "red", name, count, sortMinute: 999 });
       }
     }
 
-    lines.sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
-    if (!lines.length) return [{ kind: "empty", label: "No key stats" }];
+    lines.sort((a, b) => (a.sortMinute || 999) - (b.sortMinute || 999) || a.name.localeCompare(b.name));
     return lines.slice(0, 12);
   }
 
   function eventLineHtml(item) {
-    if (item.kind === "empty") {
-      return '<div class="match-event-line"><span class="meta">' + esc(item.label) + '</span></div>';
-    }
-
     const icon = (STAT_META[item.kind] && STAT_META[item.kind].icon) || STAT_META.goal.icon;
-    const countText = item.count > 1 ? " x" + item.count : "";
+    const minuteText = Array.isArray(item.minutes) && item.minutes.length
+      ? " " + item.minutes.map((m) => `${m}'`).join(", ")
+      : "";
+    const countText = minuteText ? "" : (item.count > 1 ? " x" + item.count : "");
     return `
       <div class="match-event-line ${esc(item.kind)}">
         <img class="event-icon" src="${esc(icon)}" alt="${esc(item.kind)}">
-        <span>${esc(item.name)} - ${esc(item.metric || item.kind)}${esc(countText)}</span>
+        <span>${esc(item.name)}${esc(minuteText)}${esc(countText)}</span>
       </div>
     `;
   }
@@ -196,10 +236,6 @@
 
     const rows = [
       ["goal", Number(player.goals || 0)],
-      ["assist", Number(player.assists || 0)],
-      ["save", Number(player.keeper_saves || 0)],
-      ["tackle", Number(player.tackles || 0)],
-      ["interception", Number(player.interceptions || 0)],
       ["red", Number(player.red_cards || 0)],
       ["yellow", Number(player.yellow_cards || 0)]
     ];
@@ -301,20 +337,10 @@
 
   function mvpReason(player) {
     if (!player) return "No MVP data available for this match.";
-    if (Number(player.goals || 0) >= 3) return "Hat-trick performance.";
-
-    const metrics = [
-      [Number(player.goals || 0), "goals"],
-      [Number(player.assists || 0), "assists"],
-      [Number(player.interceptions || 0), "interceptions"],
-      [Number(player.tackles || 0), "tackles"],
-      [Number(player.keeper_saves || 0), "saves"],
-      [Number(player.chances_created || 0), "chances created"],
-      [Number(player.key_passes || 0), "key passes"]
-    ].filter((row) => row[0] > 0).sort((a, b) => b[0] - a[0]);
-
-    if (!metrics.length) return "Strong all-around impact for the match.";
-    return metrics.slice(0, 3).map((row) => `${row[0]} ${row[1]}`).join(" | ");
+    const goals = Number(player.goals || 0);
+    if (goals >= 3) return "Hat-trick performance.";
+    if (goals > 0) return `${goals} goal${goals === 1 ? "" : "s"} in the match.`;
+    return "Strong overall performance.";
   }
 
   function mvpWidgetHtml(mvp) {
@@ -364,8 +390,11 @@
       const competitionLabel = match.tournament_name || match.game_type || "Match";
       const matchDate = fmtDateTime(match.datetime);
       const whenLabel = shortWhenLabel(match.datetime);
-      const homeEvents = buildEventLines(homeStats);
-      const awayEvents = buildEventLines(awayStats);
+      const apiHomeEvents = data.team_events && Array.isArray(data.team_events.home) ? data.team_events.home : [];
+      const apiAwayEvents = data.team_events && Array.isArray(data.team_events.away) ? data.team_events.away : [];
+      const homeEvents = apiHomeEvents.length ? apiHomeEvents : buildEventLines(homeStats);
+      const awayEvents = apiAwayEvents.length ? apiAwayEvents : buildEventLines(awayStats);
+      const hasEvents = homeEvents.length > 0 || awayEvents.length > 0;
 
       const homeLineup = parseLineupEntries(match.home_lineup || []);
       const awayLineup = parseLineupEntries(match.away_lineup || []);
@@ -400,12 +429,14 @@
             </div>
           </div>
 
+          ${hasEvents ? `
           <div class="match-events-wrap">
             <div class="match-events-grid">
               <div class="match-events">${homeEvents.map(eventLineHtml).join("")}</div>
               <div class="match-events">${awayEvents.map(eventLineHtml).join("")}</div>
             </div>
           </div>
+          ` : ""}
 
           <div class="match-bottom-meta">${esc(matchDate)}</div>
         </section>

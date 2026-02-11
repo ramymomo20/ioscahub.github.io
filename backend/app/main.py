@@ -79,6 +79,72 @@ def _record_to_dict(row: Any) -> dict[str, Any]:
     return payload
 
 
+def _safe_minutes(values: Any) -> list[int]:
+    if not isinstance(values, list):
+        return []
+    out: list[int] = []
+    for value in values:
+        try:
+            minute = int(float(value))
+        except Exception:
+            continue
+        if minute > 0:
+            out.append(minute)
+    return sorted(set(out))
+
+
+def _player_event_minutes(player_row: dict[str, Any], keys: list[str]) -> list[int]:
+    raw = player_row.get("event_timestamps") or {}
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except Exception:
+            raw = {}
+    if not isinstance(raw, dict):
+        return []
+    for key in keys:
+        mins = _safe_minutes(raw.get(key))
+        if mins:
+            return mins
+    return []
+
+
+def _build_team_event_items(team_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    for row in team_rows:
+        name = str(row.get("player_name") or row.get("steam_id") or "Unknown").strip() or "Unknown"
+
+        # Goals
+        goal_minutes = _player_event_minutes(row, ["goal", "goals"])
+        if goal_minutes:
+            events.append({"kind": "goal", "name": name, "minutes": goal_minutes, "count": len(goal_minutes), "sort_minute": goal_minutes[0]})
+        else:
+            count = int(row.get("goals") or 0)
+            if count > 0:
+                events.append({"kind": "goal", "name": name, "minutes": [], "count": count, "sort_minute": 999})
+
+        # Yellow cards
+        yellow_minutes = _player_event_minutes(row, ["yellow", "yellow_card", "yellow_cards"])
+        if yellow_minutes:
+            events.append({"kind": "yellow", "name": name, "minutes": yellow_minutes, "count": len(yellow_minutes), "sort_minute": yellow_minutes[0]})
+        else:
+            count = int(row.get("yellow_cards") or row.get("yellowCards") or 0)
+            if count > 0:
+                events.append({"kind": "yellow", "name": name, "minutes": [], "count": count, "sort_minute": 999})
+
+        # Red cards
+        red_minutes = _player_event_minutes(row, ["red", "red_card", "red_cards"])
+        if red_minutes:
+            events.append({"kind": "red", "name": name, "minutes": red_minutes, "count": len(red_minutes), "sort_minute": red_minutes[0]})
+        else:
+            count = int(row.get("red_cards") or row.get("redCards") or 0)
+            if count > 0:
+                events.append({"kind": "red", "name": name, "minutes": [], "count": count, "sort_minute": 999})
+
+    events.sort(key=lambda item: (int(item.get("sort_minute") or 999), str(item.get("name") or "").lower()))
+    return events[:20]
+
+
 def _records_to_dicts(rows: list[Any]) -> list[dict[str, Any]]:
     return [_record_to_dict(row) for row in rows]
 
@@ -746,6 +812,10 @@ async def match_detail(match_id: str) -> dict[str, Any]:
             "home": grouped.get("home", []),
             "away": grouped.get("away", []),
             "neutral": grouped.get("neutral", []),
+        },
+        "team_events": {
+            "home": _build_team_event_items(grouped.get("home", [])),
+            "away": _build_team_event_items(grouped.get("away", [])),
         },
     }
 
