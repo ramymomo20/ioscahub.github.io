@@ -122,7 +122,13 @@
     const lines = [];
 
     function parseMinutes(raw) {
-      if (!Array.isArray(raw)) return [];
+      if (Array.isArray(raw)) {
+        // pass
+      } else if (raw === null || raw === undefined) {
+        return [];
+      } else {
+        raw = [raw];
+      }
       const mins = raw
         .map((v) => {
           const n = Number(v);
@@ -146,9 +152,16 @@
     }
 
     function getMinutes(eventMap, keys) {
+      const normalized = {};
+      Object.keys(eventMap || {}).forEach((k) => {
+        normalized[String(k || "").toLowerCase().replace(/[^a-z0-9]/g, "")] = eventMap[k];
+      });
       for (const key of keys) {
         const mins = parseMinutes(eventMap[key]);
         if (mins.length) return mins;
+        const nkey = String(key || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+        const nmins = parseMinutes(normalized[nkey]);
+        if (nmins.length) return nmins;
       }
       return [];
     }
@@ -173,11 +186,12 @@
         if (count > 0) lines.push({ kind: "yellow", name, count, sortMinute: 999 });
       }
 
-      const redMinutes = getMinutes(eventMap, ["red", "red_card", "red_cards"]);
+      const redCount = Number(player.red_cards || player.redCards || 0);
+      let redMinutes = getMinutes(eventMap, ["red", "red_card", "red_cards", "redcard", "redcards", "straight_red"]);
       if (redMinutes.length) {
         lines.push({ kind: "red", name, minutes: redMinutes, sortMinute: redMinutes[0] });
       } else {
-        const count = Number(player.red_cards || player.redCards || 0);
+        const count = redCount;
         if (count > 0) lines.push({ kind: "red", name, count, sortMinute: 999 });
       }
     }

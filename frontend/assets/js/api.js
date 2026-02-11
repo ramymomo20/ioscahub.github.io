@@ -1,6 +1,30 @@
 (function () {
+  const FALLBACK_API_BASE = 'https://iosca-api.sparked.network/api';
+
+  function normalizeApiBase(value) {
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+    try {
+      const parsed = new URL(raw);
+      let path = parsed.pathname.replace(/\/+$/, '');
+      if (!path || path === '/') path = '/api';
+      return `${parsed.origin}${path}`;
+    } catch (_) {
+      return raw;
+    }
+  }
+
+  function resolveApiBase() {
+    const configured = String(window.HUB_CONFIG?.API_BASE_URL || '').trim();
+    const stored = String(localStorage.getItem('IOSCA_HUB_API_BASE_URL') || '').trim();
+    const base = normalizeApiBase(configured || stored || FALLBACK_API_BASE);
+    if (!window.HUB_CONFIG) window.HUB_CONFIG = {};
+    window.HUB_CONFIG.API_BASE_URL = base;
+    return base;
+  }
+
   function assertApiConfigured() {
-    const base = String(window.HUB_CONFIG?.API_BASE_URL || '').trim();
+    const base = resolveApiBase();
     if (!base) {
       throw new Error(
         'Hub API URL is not configured. Open once with ?hub_api=https://your-api-domain/api'
@@ -31,7 +55,7 @@
 
   async function request(path, params) {
     assertApiConfigured();
-    const url = window.HUB_CONFIG.API_BASE_URL + path + toQuery(params);
+    const url = resolveApiBase() + path + toQuery(params);
     const response = await fetch(url, { headers: { 'Accept': 'application/json' } });
     if (!response.ok) {
       const text = await response.text();

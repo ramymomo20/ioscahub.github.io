@@ -80,6 +80,10 @@ def _record_to_dict(row: Any) -> dict[str, Any]:
 
 
 def _safe_minutes(values: Any) -> list[int]:
+    if isinstance(values, (int, float, str)):
+        values = [values]
+    elif isinstance(values, (tuple, set)):
+        values = list(values)
     if not isinstance(values, list):
         return []
     out: list[int] = []
@@ -93,6 +97,90 @@ def _safe_minutes(values: Any) -> list[int]:
     return sorted(set(out))
 
 
+def _safe_int(value: Any) -> int:
+    try:
+        return int(float(value))
+    except Exception:
+        return 0
+
+
+def _parse_event_map(raw: Any) -> dict[str, list[int]]:
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except Exception:
+            raw = {}
+    if not isinstance(raw, dict):
+        return {}
+    parsed: dict[str, list[int]] = {}
+    for key, value in raw.items():
+        key_norm = str(key or "").strip()
+        if not key_norm:
+            continue
+        minutes = _safe_minutes(value)
+        if minutes:
+            parsed[key_norm] = minutes
+    return parsed
+
+
+def _merge_event_maps(left: Any, right: Any) -> dict[str, list[int]]:
+    out = _parse_event_map(left)
+    incoming = _parse_event_map(right)
+    for key, vals in incoming.items():
+        out[key] = sorted(set(out.get(key, []) + vals))
+    return out
+
+
+def _merge_match_player_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    merged: dict[tuple[str, str], dict[str, Any]] = {}
+    numeric_fields = [
+        "goals",
+        "assists",
+        "second_assists",
+        "keeper_saves",
+        "tackles",
+        "interceptions",
+        "chances_created",
+        "key_passes",
+        "yellow_cards",
+        "red_cards",
+        "own_goals",
+        "shots",
+        "shots_on_goal",
+        "passes_completed",
+        "passes_attempted",
+        "distance_covered",
+        "goals_conceded",
+    ]
+
+    for row in rows:
+        steam_key = str(row.get("steam_id") or "").strip().lower()
+        guild_key = str(row.get("guild_id") or "").strip().lower()
+        key = (steam_key, guild_key)
+
+        current = merged.get(key)
+        if not current:
+            item = dict(row)
+            item["event_timestamps"] = _parse_event_map(item.get("event_timestamps"))
+            merged[key] = item
+            continue
+
+        for field in numeric_fields:
+            current[field] = _safe_int(current.get(field)) + _safe_int(row.get(field))
+
+        if not current.get("player_name") and row.get("player_name"):
+            current["player_name"] = row.get("player_name")
+        if not current.get("position") and row.get("position"):
+            current["position"] = row.get("position")
+
+        current["event_timestamps"] = _merge_event_maps(
+            current.get("event_timestamps"),
+            row.get("event_timestamps"),
+        )
+
+    return list(merged.values())
+
+
 def _player_event_minutes(player_row: dict[str, Any], keys: list[str]) -> list[int]:
     raw = player_row.get("event_timestamps") or {}
     if isinstance(raw, str):
@@ -102,8 +190,18 @@ def _player_event_minutes(player_row: dict[str, Any], keys: list[str]) -> list[i
             raw = {}
     if not isinstance(raw, dict):
         return []
+    normalized_raw: dict[str, Any] = {}
+    for raw_key, raw_val in raw.items():
+        norm_key = re.sub(r"[^a-z0-9]+", "", str(raw_key or "").lower())
+        if norm_key:
+            normalized_raw[norm_key] = raw_val
+
     for key in keys:
         mins = _safe_minutes(raw.get(key))
+        if mins:
+            return mins
+        norm_key = re.sub(r"[^a-z0-9]+", "", str(key or "").lower())
+        mins = _safe_minutes(normalized_raw.get(norm_key))
         if mins:
             return mins
     return []
@@ -132,16 +230,13 @@ def _extract_lineup_identity_sets(lineup_data: Any) -> dict[str, set[str]]:
         return {"steam": steam_keys, "name": name_keys}
 
     for item in lineup_data:
-        started = True
         player_name = ""
         steam_id = ""
 
         if isinstance(item, list) and len(item) >= 3:
-            started = bool(item[3]) if len(item) >= 4 else True
             player_name = str(item[1] or item[2] or "").strip()
             steam_id = str(item[2] or "").strip()
         elif isinstance(item, dict):
-            started = True if item.get("started") is None else bool(item.get("started"))
             player_name = str(
                 item.get("name")
                 or item.get("player_name")
@@ -151,9 +246,6 @@ def _extract_lineup_identity_sets(lineup_data: Any) -> dict[str, set[str]]:
                 or ""
             ).strip()
             steam_id = str(item.get("steam_id") or item.get("steamId") or "").strip()
-
-        if not started:
-            continue
 
         for alias in _steam_aliases(steam_id):
             steam_keys.add(alias)
@@ -204,13 +296,15 @@ def _build_team_event_items(team_rows: list[dict[str, Any]]) -> list[dict[str, A
                 events.append({"kind": "yellow", "name": name, "minutes": [], "count": count, "sort_minute": 999})
 
         # Red cards
-        red_minutes = _player_event_minutes(row, ["red", "red_card", "red_cards"])
+        red_count = int(row.get("red_cards") or row.get("redCards") or 0)
+        red_minutes = _player_event_minutes(
+            row,
+            ["red", "red_card", "red_cards", "redcard", "redcards", "straight_red", "second_yellow_red"],
+        )
         if red_minutes:
             events.append({"kind": "red", "name": name, "minutes": red_minutes, "count": len(red_minutes), "sort_minute": red_minutes[0]})
-        else:
-            count = int(row.get("red_cards") or row.get("redCards") or 0)
-            if count > 0:
-                events.append({"kind": "red", "name": name, "minutes": [], "count": count, "sort_minute": 999})
+        elif red_count > 0:
+            events.append({"kind": "red", "name": name, "minutes": [], "count": red_count, "sort_minute": 999})
 
     events.sort(key=lambda item: (int(item.get("sort_minute") or 999), str(item.get("name") or "").lower()))
     return events[:20]
@@ -871,17 +965,28 @@ async def match_detail(match_id: str) -> dict[str, Any]:
     away_lineup_keys = _extract_lineup_identity_sets(match_payload.get("away_lineup"))
     home_guild_key = str(match_payload.get("home_guild_id") or "").strip()
     away_guild_key = str(match_payload.get("away_guild_id") or "").strip()
+    home_name_key = _norm_text_key(match_payload.get("home_team_name") or "")
+    away_name_key = _norm_text_key(match_payload.get("away_team_name") or "")
+    is_same_side_match = (
+        (home_guild_key and away_guild_key and home_guild_key == away_guild_key)
+        or (home_name_key and away_name_key and home_name_key == away_name_key)
+    )
+
+    consolidated_stats = _merge_match_player_rows(_records_to_dicts(stats))
 
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for item in _records_to_dicts(stats):
+    for item in consolidated_stats:
         side = "neutral"
         item_guild_key = str(item.get("guild_id") or "").strip()
-        if item_guild_key and item_guild_key == home_guild_key:
-            side = "home"
-        elif item_guild_key and item_guild_key == away_guild_key:
-            side = "away"
-        else:
+        if is_same_side_match:
             side = _infer_side_from_lineup(item, home_lineup_keys, away_lineup_keys)
+        else:
+            if item_guild_key and item_guild_key == home_guild_key:
+                side = "home"
+            elif item_guild_key and item_guild_key == away_guild_key:
+                side = "away"
+            else:
+                side = _infer_side_from_lineup(item, home_lineup_keys, away_lineup_keys)
         grouped[side].append(item)
 
     return {
