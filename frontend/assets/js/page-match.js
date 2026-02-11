@@ -10,16 +10,14 @@
     return;
   }
 
-  const STAT_ICONS = {
-    goal: "assets/icons/soccer-ball-icon.png",
-    assist: "assets/icons/cleats-icon.png",
-    save: "assets/icons/glove-icon.png",
-    tackle: "assets/icons/cleats-icon.png",
-    interception: "assets/icons/cleats-icon.png",
-    chance: "assets/icons/cleats-icon.png",
-    keypass: "assets/icons/cleats-icon.png",
-    yellow: "assets/icons/yellow-card-icon.png",
-    red: "assets/icons/red-card-icon.png"
+  const STAT_META = {
+    goal: { icon: "assets/icons/soccer-ball-icon.png", label: "Goals", chip: "G" },
+    assist: { icon: "assets/icons/cleats-icon.png", label: "Assists", chip: "A" },
+    save: { icon: "assets/icons/glove-icon.png", label: "Saves", chip: "S" },
+    tackle: { icon: "assets/icons/cleats-icon.png", label: "Tackles", chip: "TKL" },
+    interception: { icon: "assets/icons/cleats-icon.png", label: "Interceptions", chip: "INT" },
+    yellow: { icon: "assets/icons/yellow-card-icon.png", label: "Yellow cards", chip: "Y" },
+    red: { icon: "assets/icons/red-card-icon.png", label: "Red cards", chip: "R" }
   };
 
   const FORMATIONS = {
@@ -131,15 +129,13 @@
         ["save", Number(player.keeper_saves || 0)],
         ["tackle", Number(player.tackles || 0)],
         ["interception", Number(player.interceptions || 0)],
-        ["chance", Number(player.chances_created || 0)],
-        ["keypass", Number(player.key_passes || 0)],
         ["yellow", Number(player.yellow_cards || 0)],
         ["red", Number(player.red_cards || 0)]
       ];
 
       for (const row of rows) {
         if (row[1] > 0) {
-          lines.push({ kind: row[0], name, count: row[1] });
+          lines.push({ kind: row[0], name, count: row[1], metric: STAT_META[row[0]] ? STAT_META[row[0]].label : row[0] });
         }
       }
     }
@@ -154,12 +150,12 @@
       return '<div class="match-event-line"><span class="meta">' + esc(item.label) + '</span></div>';
     }
 
-    const icon = STAT_ICONS[item.kind] || STAT_ICONS.goal;
+    const icon = (STAT_META[item.kind] && STAT_META[item.kind].icon) || STAT_META.goal.icon;
     const countText = item.count > 1 ? " x" + item.count : "";
     return `
       <div class="match-event-line ${esc(item.kind)}">
         <img class="event-icon" src="${esc(icon)}" alt="${esc(item.kind)}">
-        <span>${esc(item.name)}${esc(countText)}</span>
+        <span>${esc(item.name)} - ${esc(item.metric || item.kind)}${esc(countText)}</span>
       </div>
     `;
   }
@@ -204,15 +200,13 @@
       ["save", Number(player.keeper_saves || 0)],
       ["tackle", Number(player.tackles || 0)],
       ["interception", Number(player.interceptions || 0)],
-      ["keypass", Number(player.key_passes || 0)],
-      ["chance", Number(player.chances_created || 0)],
       ["red", Number(player.red_cards || 0)],
       ["yellow", Number(player.yellow_cards || 0)]
     ];
 
     const chips = rows
       .filter((row) => row[1] > 0)
-      .map((row) => `<span class="pitch-stat-chip"><img src="${esc(STAT_ICONS[row[0]])}" alt="${esc(row[0])}"><em>${esc(row[1])}</em></span>`);
+      .map((row) => `<span class="pitch-stat-chip"><img src="${esc(STAT_META[row[0]].icon)}" alt="${esc(row[0])}"><em>${esc(row[1])}</em><small>${esc(STAT_META[row[0]].chip)}</small></span>`);
 
     if (!chips.length) return "";
     return `<div class="pitch-player-stats">${chips.join("")}</div>`;

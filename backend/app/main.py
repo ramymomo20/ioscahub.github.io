@@ -704,8 +704,11 @@ async def match_detail(match_id: str) -> dict[str, Any]:
                 SELECT DISTINCT ON (pmd.steam_id, COALESCE(pmd.guild_id::text, ''))
                     pmd.*
                 FROM PLAYER_MATCH_DATA pmd
-                WHERE pmd.match_id::text = $2::text
-                   OR (CASE WHEN pmd.match_id::text ~ '^[0-9]+$' THEN pmd.match_id::bigint END) = $1::bigint
+                WHERE (
+                        pmd.match_id::text = $2::text
+                        OR (CASE WHEN pmd.match_id::text ~ '^[0-9]+$' THEN pmd.match_id::bigint END) = $1::bigint
+                      )
+                  AND pmd.steam_id ~* '^((STEAM_[0-5]:[0-1]:[0-9]+)|(\\[U:1:[0-9]+\\])|([0-9]{16,20}))$'
                 ORDER BY
                     pmd.steam_id,
                     COALESCE(pmd.guild_id::text, ''),
