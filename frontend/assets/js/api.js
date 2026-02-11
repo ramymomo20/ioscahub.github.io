@@ -14,12 +14,33 @@
     }
   }
 
+  function isUsableApiBase(value) {
+    const raw = String(value || '').trim();
+    if (!raw) return false;
+    try {
+      const parsed = new URL(raw);
+      const host = parsed.hostname.toLowerCase();
+      const path = parsed.pathname.replace(/\/+$/, '');
+      if (host.endsWith('github.io')) return false;
+      if (path === '' || path === '/') return false;
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   function resolveApiBase() {
-    const configured = String(window.HUB_CONFIG?.API_BASE_URL || '').trim();
-    const stored = String(localStorage.getItem('IOSCA_HUB_API_BASE_URL') || '').trim();
-    const base = normalizeApiBase(configured || stored || FALLBACK_API_BASE);
+    const configured = normalizeApiBase(window.HUB_CONFIG?.API_BASE_URL);
+    const stored = normalizeApiBase(localStorage.getItem('IOSCA_HUB_API_BASE_URL'));
+    const fallback = normalizeApiBase(FALLBACK_API_BASE);
+    const base = [configured, stored, fallback].find((candidate) => isUsableApiBase(candidate)) || fallback;
     if (!window.HUB_CONFIG) window.HUB_CONFIG = {};
     window.HUB_CONFIG.API_BASE_URL = base;
+    if (isUsableApiBase(base)) {
+      try {
+        localStorage.setItem('IOSCA_HUB_API_BASE_URL', base);
+      } catch (_) {}
+    }
     return base;
   }
 

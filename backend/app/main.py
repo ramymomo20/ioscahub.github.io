@@ -931,26 +931,18 @@ async def match_detail(match_id: str) -> dict[str, Any]:
         row_match_id = str(row.get("match_id") or "")
         stats = await conn.fetch(
             """
-            WITH dedup AS (
-                SELECT DISTINCT ON (pmd.steam_id, COALESCE(pmd.guild_id::text, ''))
-                    pmd.*
-                FROM PLAYER_MATCH_DATA pmd
-                WHERE (
-                        pmd.match_id::text = $2::text
-                        OR (CASE WHEN pmd.match_id::text ~ '^[0-9]+$' THEN pmd.match_id::bigint END) = $1::bigint
-                      )
-                ORDER BY
-                    pmd.steam_id,
-                    COALESCE(pmd.guild_id::text, ''),
-                    pmd.updated_at DESC NULLS LAST,
-                    pmd.id DESC
-            )
             SELECT
-                d.*,
-                COALESCE(ip.discord_name, d.steam_id) AS player_name
-            FROM dedup d
-            LEFT JOIN IOSCA_PLAYERS ip ON ip.steam_id = d.steam_id
-            ORDER BY d.goals DESC, d.assists DESC, d.keeper_saves DESC, player_name ASC
+                pmd.*,
+                COALESCE(ip.discord_name, pmd.steam_id) AS player_name
+            FROM PLAYER_MATCH_DATA pmd
+            LEFT JOIN IOSCA_PLAYERS ip ON ip.steam_id = pmd.steam_id
+            WHERE (
+                    pmd.match_id::text = $2::text
+                    OR (CASE WHEN pmd.match_id::text ~ '^[0-9]+$' THEN pmd.match_id::bigint END) = $1::bigint
+                  )
+            ORDER BY
+                pmd.updated_at DESC NULLS LAST,
+                pmd.id DESC
             """,
             row_id,
             row_match_id,
