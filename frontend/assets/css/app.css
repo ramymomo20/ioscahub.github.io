@@ -820,29 +820,29 @@ tbody tr:hover {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 3px;
-  min-height: 18px;
+  gap: 5px;
+  min-height: 22px;
 }
 
 .pitch-stat-chip {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
-  padding: 1px 4px;
+  gap: 4px;
+  padding: 2px 7px;
   border-radius: 999px;
   background: rgba(11, 25, 49, 0.86);
   border: 1px solid rgba(135, 183, 255, 0.32);
 }
 
 .pitch-stat-chip img {
-  width: 12px;
-  height: 12px;
+  width: 14px;
+  height: 14px;
   object-fit: contain;
 }
 
 .pitch-stat-chip em {
   font-style: normal;
-  font-size: 0.68rem;
+  font-size: 0.8rem;
   font-weight: 700;
   color: #e7f2ff;
 }

@@ -109,6 +109,77 @@ def _player_event_minutes(player_row: dict[str, Any], keys: list[str]) -> list[i
     return []
 
 
+def _norm_text_key(value: Any) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(value or "").lower())
+
+
+def _steam_aliases(steam_id: Any) -> set[str]:
+    raw = str(steam_id or "").strip()
+    if not raw:
+        return set()
+    aliases = {raw.lower()}
+    steam64 = _steam_to_steam64(raw)
+    if steam64:
+        aliases.add(str(steam64))
+    return aliases
+
+
+def _extract_lineup_identity_sets(lineup_data: Any) -> dict[str, set[str]]:
+    steam_keys: set[str] = set()
+    name_keys: set[str] = set()
+
+    if not isinstance(lineup_data, list):
+        return {"steam": steam_keys, "name": name_keys}
+
+    for item in lineup_data:
+        started = True
+        player_name = ""
+        steam_id = ""
+
+        if isinstance(item, list) and len(item) >= 3:
+            started = bool(item[3]) if len(item) >= 4 else True
+            player_name = str(item[1] or item[2] or "").strip()
+            steam_id = str(item[2] or "").strip()
+        elif isinstance(item, dict):
+            started = True if item.get("started") is None else bool(item.get("started"))
+            player_name = str(
+                item.get("name")
+                or item.get("player_name")
+                or item.get("discord_name")
+                or item.get("player")
+                or item.get("steam_id")
+                or ""
+            ).strip()
+            steam_id = str(item.get("steam_id") or item.get("steamId") or "").strip()
+
+        if not started:
+            continue
+
+        for alias in _steam_aliases(steam_id):
+            steam_keys.add(alias)
+
+        name_key = _norm_text_key(player_name)
+        if name_key:
+            name_keys.add(name_key)
+
+    return {"steam": steam_keys, "name": name_keys}
+
+
+def _infer_side_from_lineup(
+    player_row: dict[str, Any],
+    home_keys: dict[str, set[str]],
+    away_keys: dict[str, set[str]],
+) -> str:
+    aliases = _steam_aliases(player_row.get("steam_id"))
+    player_name_key = _norm_text_key(player_row.get("player_name") or player_row.get("steam_id"))
+
+    if (aliases and aliases.intersection(home_keys["steam"])) or (player_name_key and player_name_key in home_keys["name"]):
+        return "home"
+    if (aliases and aliases.intersection(away_keys["steam"])) or (player_name_key and player_name_key in away_keys["name"]):
+        return "away"
+    return "neutral"
+
+
 def _build_team_event_items(team_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     events: list[dict[str, Any]] = []
     for row in team_rows:
@@ -774,7 +845,6 @@ async def match_detail(match_id: str) -> dict[str, Any]:
                         pmd.match_id::text = $2::text
                         OR (CASE WHEN pmd.match_id::text ~ '^[0-9]+$' THEN pmd.match_id::bigint END) = $1::bigint
                       )
-                  AND pmd.steam_id ~* '^((STEAM_[0-5]:[0-1]:[0-9]+)|(\\[U:1:[0-9]+\\])|([0-9]{16,20}))$'
                 ORDER BY
                     pmd.steam_id,
                     COALESCE(pmd.guild_id::text, ''),
@@ -797,13 +867,21 @@ async def match_detail(match_id: str) -> dict[str, Any]:
     match_payload["away_lineup"] = _parse_json(match_payload.get("away_lineup"), [])
     match_payload["substitutions"] = _parse_json(match_payload.get("substitutions"), [])
 
+    home_lineup_keys = _extract_lineup_identity_sets(match_payload.get("home_lineup"))
+    away_lineup_keys = _extract_lineup_identity_sets(match_payload.get("away_lineup"))
+    home_guild_key = str(match_payload.get("home_guild_id") or "").strip()
+    away_guild_key = str(match_payload.get("away_guild_id") or "").strip()
+
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for item in _records_to_dicts(stats):
         side = "neutral"
-        if str(item.get("guild_id") or "") == str(match_payload.get("home_guild_id") or ""):
+        item_guild_key = str(item.get("guild_id") or "").strip()
+        if item_guild_key and item_guild_key == home_guild_key:
             side = "home"
-        elif str(item.get("guild_id") or "") == str(match_payload.get("away_guild_id") or ""):
+        elif item_guild_key and item_guild_key == away_guild_key:
             side = "away"
+        else:
+            side = _infer_side_from_lineup(item, home_lineup_keys, away_lineup_keys)
         grouped[side].append(item)
 
     return {

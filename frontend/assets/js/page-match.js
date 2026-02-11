@@ -242,7 +242,7 @@
 
     const chips = rows
       .filter((row) => row[1] > 0)
-      .map((row) => `<span class="pitch-stat-chip"><img src="${esc(STAT_META[row[0]].icon)}" alt="${esc(row[0])}"><em>${esc(row[1])}</em><small>${esc(STAT_META[row[0]].chip)}</small></span>`);
+      .map((row) => `<span class="pitch-stat-chip"><img src="${esc(STAT_META[row[0]].icon)}" alt="${esc(row[0])}"><em>${esc(row[1])}</em></span>`);
 
     if (!chips.length) return "";
     return `<div class="pitch-player-stats">${chips.join("")}</div>`;
