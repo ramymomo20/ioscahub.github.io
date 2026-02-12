@@ -49,6 +49,10 @@ JS_MAX_SAFE_INTEGER = 9007199254740991
 STEAM_ID64_BASE = 76561197960265728
 STEAM_PROFILE_CACHE_TTL_SECONDS = 1800
 _steam_profile_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+DISCORD_MEMBER_ROLE_CACHE_TTL_SECONDS = 300
+DISCORD_GUILD_ROLES_CACHE_TTL_SECONDS = 600
+_discord_member_role_cache: dict[str, tuple[float, list[str]]] = {}
+_discord_guild_roles_cache: dict[str, tuple[float, dict[str, str]]] = {}
 
 
 def _to_iso(value: Any) -> Any:
@@ -287,6 +291,138 @@ def _asset_emoji_url(asset: dict[str, Any] | None) -> str | None:
     if not raw_discord_id.isdigit():
         return None
     return f"https://cdn.discordapp.com/emojis/{raw_discord_id}.png?size=64&quality=lossless"
+
+
+def _asset_key_base(asset_key: Any) -> str:
+    key = str(asset_key or "").strip().lower()
+    if not key:
+        return ""
+    key = re.sub(r"[^a-z0-9_]+", "", key)
+    for suffix in ("_role", "_emoji", "role", "emoji"):
+        if key.endswith(suffix):
+            key = key[: -len(suffix)]
+            break
+    return key.strip("_")
+
+
+def _pick_emoji_for_role_asset(
+    role_asset: dict[str, Any] | None,
+    emoji_assets: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    if not role_asset or not emoji_assets:
+        return None
+
+    role_key = str(role_asset.get("asset_key") or "").strip().lower()
+    role_base = _asset_key_base(role_key)
+    role_name = str(role_asset.get("asset_name") or "").strip().lower()
+
+    best: dict[str, Any] | None = None
+    best_score = -1
+    for emoji in emoji_assets:
+        ekey = str(emoji.get("asset_key") or "").strip().lower()
+        ebase = _asset_key_base(ekey)
+        ename = str(emoji.get("asset_name") or "").strip().lower()
+        score = 0
+
+        if role_key and role_key.replace("_role", "_emoji") == ekey:
+            score += 10
+        if role_base and ebase and role_base == ebase:
+            score += 8
+        if role_base and ekey.startswith(role_base):
+            score += 4
+        if role_base and role_base in ekey:
+            score += 3
+        if role_name and role_name in ename:
+            score += 2
+
+        if score > best_score:
+            best_score = score
+            best = emoji
+
+    return best if best_score > 0 else None
+
+
+def _fetch_discord_member_roles_sync(
+    bot_token: str,
+    guild_id: Any,
+    discord_id: Any,
+) -> list[str]:
+    gid = str(guild_id or "").strip()
+    uid = str(discord_id or "").strip()
+    token = str(bot_token or "").strip()
+    if not gid or not uid or not token:
+        return []
+
+    url = f"https://discord.com/api/v10/guilds/{gid}/members/{uid}"
+    headers = {"Authorization": f"Bot {token}"}
+    try:
+        resp = requests.get(url, headers=headers, timeout=5)
+        if resp.status_code != 200:
+            return []
+        payload = resp.json() if resp.text else {}
+        roles = payload.get("roles") or []
+        return [str(r).strip() for r in roles if str(r).strip().isdigit()]
+    except Exception:
+        return []
+
+
+async def _get_discord_member_role_ids(guild_id: Any, discord_id: Any) -> list[str]:
+    token = str(settings.discord_bot_token or "").strip()
+    gid = str(guild_id or "").strip()
+    uid = str(discord_id or "").strip()
+    if not token or not gid or not uid:
+        return []
+
+    cache_key = f"{gid}:{uid}"
+    now = time.time()
+    cached = _discord_member_role_cache.get(cache_key)
+    if cached and cached[0] > now:
+        return cached[1]
+
+    role_ids = await asyncio.to_thread(_fetch_discord_member_roles_sync, token, gid, uid)
+    _discord_member_role_cache[cache_key] = (now + DISCORD_MEMBER_ROLE_CACHE_TTL_SECONDS, role_ids)
+    return role_ids
+
+
+def _fetch_discord_guild_roles_sync(bot_token: str, guild_id: Any) -> dict[str, str]:
+    gid = str(guild_id or "").strip()
+    token = str(bot_token or "").strip()
+    if not gid or not token:
+        return {}
+
+    url = f"https://discord.com/api/v10/guilds/{gid}/roles"
+    headers = {"Authorization": f"Bot {token}"}
+    try:
+        resp = requests.get(url, headers=headers, timeout=6)
+        if resp.status_code != 200:
+            return {}
+        payload = resp.json() if resp.text else []
+        out: dict[str, str] = {}
+        if isinstance(payload, list):
+            for row in payload:
+                rid = str((row or {}).get("id") or "").strip()
+                rname = str((row or {}).get("name") or "").strip()
+                if rid:
+                    out[rid] = rname or rid
+        return out
+    except Exception:
+        return {}
+
+
+async def _get_discord_guild_role_map(guild_id: Any) -> dict[str, str]:
+    token = str(settings.discord_bot_token or "").strip()
+    gid = str(guild_id or "").strip()
+    if not token or not gid:
+        return {}
+
+    now = time.time()
+    cached = _discord_guild_roles_cache.get(gid)
+    if cached and cached[0] > now:
+        return cached[1]
+
+    role_map = await asyncio.to_thread(_fetch_discord_guild_roles_sync, token, gid)
+    _discord_guild_roles_cache[gid] = (now + DISCORD_GUILD_ROLES_CACHE_TTL_SECONDS, role_map)
+    return role_map
 
 
 def _steam_aliases(steam_id: Any) -> set[str]:
@@ -974,6 +1110,7 @@ async def player_detail(steam_id: str) -> dict[str, Any]:
 
         role_assets: list[dict[str, Any]] = []
         emoji_assets: list[dict[str, Any]] = []
+        main_guild_id = None
         try:
             main_discord = await conn.fetchrow(
                 "SELECT guild_id FROM MAIN_DISCORD ORDER BY id ASC LIMIT 1"
@@ -1029,6 +1166,38 @@ async def player_detail(steam_id: str) -> dict[str, Any]:
         "emoji_url": _asset_emoji_url(emoji_asset),
         "asset_guild_id": role_asset.get("guild_id") if role_asset else (emoji_asset.get("guild_id") if emoji_asset else None),
     }
+
+    member_roles: list[dict[str, Any]] = []
+    try:
+        member_role_ids = await _get_discord_member_role_ids(main_guild_id, player_payload.get("discord_id"))
+        if member_role_ids:
+            role_assets_by_id = {
+                str(asset.get("discord_id")): asset
+                for asset in role_assets
+                if str(asset.get("discord_id") or "").strip()
+            }
+            guild_role_map = await _get_discord_guild_role_map(main_guild_id)
+            for role_id in member_role_ids:
+                mapped_role_asset = role_assets_by_id.get(str(role_id))
+                mapped_emoji_asset = _pick_emoji_for_role_asset(mapped_role_asset, emoji_assets)
+                role_name = (
+                    (mapped_role_asset.get("asset_name") if mapped_role_asset else None)
+                    or guild_role_map.get(str(role_id))
+                    or str(role_id)
+                )
+                member_roles.append(
+                    {
+                        "role_id": str(role_id),
+                        "role_name": role_name,
+                        "role_key": mapped_role_asset.get("asset_key") if mapped_role_asset else None,
+                        "role_raw_value": mapped_role_asset.get("raw_value") if mapped_role_asset else None,
+                        "emoji_raw_value": mapped_emoji_asset.get("raw_value") if mapped_emoji_asset else None,
+                        "emoji_url": _asset_emoji_url(mapped_emoji_asset),
+                    }
+                )
+    except Exception:
+        member_roles = []
+    player_payload["member_roles"] = member_roles
 
     outcome_payload = _record_to_dict(outcome)
     matches_played = int(outcome_payload.get("matches_played") or 0)

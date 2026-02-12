@@ -29,17 +29,19 @@ jobs:
           SUPABASE_POOLER_URL: ${{ secrets.SUPABASE_POOLER_URL }}
         run: |
           if [ -z "${SUPABASE_DB_URL}" ] && [ -z "${SUPABASE_POOLER_URL}" ]; then
-            echo "::error::Missing DB secret. Set SUPABASE_DB_URL or SUPABASE_POOLER_URL in repo secrets."
-            exit 2
+            echo "::warning::Missing DB secret. Set SUPABASE_DB_URL or SUPABASE_POOLER_URL in repo secrets."
+            echo "HUB_EXPORT_SKIP=1" >> "$GITHUB_ENV"
           fi
 
       - name: Export data
+        if: env.HUB_EXPORT_SKIP != '1'
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
           SUPABASE_POOLER_URL: ${{ secrets.SUPABASE_POOLER_URL }}
         run: python tools/export_hub_data.py
 
       - name: Commit data if changed
+        if: env.HUB_EXPORT_SKIP != '1'
         run: |
           if git diff --quiet data/hub.json; then
             echo "No changes to commit"

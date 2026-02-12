@@ -18,6 +18,7 @@
     const summary = data.summary || {};
     const team = data.team || {};
     const roleBadge = p.role_badge || {};
+    const memberRoles = Array.isArray(p.member_roles) ? p.member_roles : [];
     const fallbackAvatar = 'https://cdn.discordapp.com/embed/avatars/0.png';
     const teamLogoFallback = 'assets/icons/iosca-icon.png';
 
@@ -103,6 +104,32 @@
       return '';
     }
 
+    function roleChip(role) {
+      const label = role && (role.role_name || role.role_key || role.role_raw_value || role.role_id);
+      if (!label) return '';
+      const emoji = roleEmojiHtml(role);
+      return `
+        <span class="player-role-chip">
+          ${emoji}
+          <span>${esc(String(label))}</span>
+        </span>
+      `;
+    }
+
+    function rolesSection() {
+      const chips = memberRoles
+        .map((role) => roleChip(role))
+        .filter(Boolean)
+        .join('');
+      if (!chips) return '';
+      return `
+        <div class="player-member-roles">
+          <div class="k">Discord Roles</div>
+          <div class="player-role-chip-list">${chips}</div>
+        </div>
+      `;
+    }
+
     function competitionLabel(match) {
       if (match.is_tournament || match.tournament_name) {
         return `Tournament${match.tournament_name ? `: ${match.tournament_name}` : ''}`;
@@ -149,71 +176,78 @@
 
     page.innerHTML = `
       <div class="grid cols-2 player-top-grid">
-        <div class="card profile-hero-card" style="margin:0;">
-          <div class="profile-head">
-            <img class="profile-avatar-lg" src="${esc(p.display_avatar_url || p.steam_avatar_url || p.avatar_url || p.avatar_fallback_url || fallbackAvatar)}" alt="avatar" onerror="this.onerror=null;this.src='${fallbackAvatar}';">
-            <div class="profile-details">
-              <h2>${esc(p.discord_name || p.steam_name || 'Unknown')}</h2>
-              <div class="player-role-rating">
-                <div class="role-box">
-                  <div class="k">Position</div>
-                  <div class="v">${esc(p.position || 'N/A')}</div>
+        <div class="player-left-stack">
+          <div class="card profile-hero-card" style="margin:0;">
+            <div class="profile-head">
+              <img class="profile-avatar-lg" src="${esc(p.display_avatar_url || p.steam_avatar_url || p.avatar_url || p.avatar_fallback_url || fallbackAvatar)}" alt="avatar" onerror="this.onerror=null;this.src='${fallbackAvatar}';">
+              <div class="profile-details">
+                <h2>${esc(p.discord_name || p.steam_name || 'Unknown')}</h2>
+                <div class="player-role-rating">
+                  <div class="role-box">
+                    <div class="k">Position</div>
+                    <div class="v">${esc(p.position || 'N/A')}</div>
+                  </div>
+                  <div class="role-box">
+                    <div class="k">Rating</div>
+                    <div class="v">${esc(fmtRating(p.rating))}</div>
+                  </div>
                 </div>
-                <div class="role-box">
-                  <div class="k">Rating</div>
-                  <div class="v">${esc(fmtRating(p.rating))}</div>
-                </div>
+                <div class="meta">Steam: ${esc(p.steam_id)}${p.steam_name ? ` | ${esc(p.steam_name)}` : ''}</div>
+                ${p.steam_profile_url ? `<div class="profile-link"><a target="_blank" rel="noreferrer" href="${esc(p.steam_profile_url)}">Open Steam profile</a></div>` : ''}
+                ${
+                  team.guild_id
+                    ? `
+                    <div class="player-team-chip">
+                      <img src="${esc(team.guild_icon || teamLogoFallback)}" alt="${esc(team.guild_name || 'Team')}" onerror="this.onerror=null;this.src='${teamLogoFallback}';">
+                      <span>Current team: <a href="team.html?id=${esc(team.guild_id)}">${esc(team.guild_name || 'Unknown Team')}</a></span>
+                    </div>
+                  `
+                    : `<div class="player-team-chip empty"><span>Current team: N/A</span></div>`
+                }
+                ${
+                  (roleBadge && (roleBadge.role_name || roleBadge.role_key || roleBadge.emoji_raw_value || roleBadge.emoji_url))
+                    ? `
+                    <div class="player-role-asset-chip">
+                      ${roleEmojiHtml(roleBadge)}
+                      <span>
+                        <strong>Role:</strong>
+                        ${esc(roleBadge.role_name || roleBadge.role_key || 'N/A')}
+                      </span>
+                    </div>
+                  `
+                    : ''
+                }
+                ${rolesSection()}
               </div>
-              <div class="meta">Steam: ${esc(p.steam_id)}${p.steam_name ? ` | ${esc(p.steam_name)}` : ''}</div>
-              ${p.steam_profile_url ? `<div class="profile-link"><a target="_blank" rel="noreferrer" href="${esc(p.steam_profile_url)}">Open Steam profile</a></div>` : ''}
-              ${
-                team.guild_id
-                  ? `
-                  <div class="player-team-chip">
-                    <img src="${esc(team.guild_icon || teamLogoFallback)}" alt="${esc(team.guild_name || 'Team')}" onerror="this.onerror=null;this.src='${teamLogoFallback}';">
-                    <span>Current team: <a href="team.html?id=${esc(team.guild_id)}">${esc(team.guild_name || 'Unknown Team')}</a></span>
-                  </div>
-                `
-                  : `<div class="player-team-chip empty"><span>Current team: N/A</span></div>`
-              }
-              ${
-                (roleBadge && (roleBadge.role_name || roleBadge.role_key || roleBadge.emoji_raw_value || roleBadge.emoji_url))
-                  ? `
-                  <div class="player-role-asset-chip">
-                    ${roleEmojiHtml(roleBadge)}
-                    <span>
-                      <strong>Role:</strong>
-                      ${esc(roleBadge.role_name || roleBadge.role_key || 'N/A')}
-                    </span>
-                  </div>
-                `
-                  : ''
-              }
-              <div class="player-quick-summary">
-                <div class="quick-box">
-                  <div class="k">W/D/L</div>
-                  <div class="v">${esc(summary.wins || 0)}/${esc(summary.draws || 0)}/${esc(summary.losses || 0)}</div>
-                </div>
-                <div class="quick-box">
-                  <div class="k">Win Rate</div>
-                  <div class="v">${esc(Number(summary.win_rate || 0).toFixed(1))}%</div>
-                </div>
-                <div class="quick-box">
-                  <div class="k">Avg Goals</div>
-                  <div class="v">${esc(Number(summary.avg_goals_per_match || 0).toFixed(2))}</div>
-                </div>
-                <div class="quick-box">
-                  <div class="k">Avg Assists</div>
-                  <div class="v">${esc(Number(summary.avg_assists_per_match || 0).toFixed(2))}</div>
-                </div>
-                <div class="quick-form">
-                  <div class="k">Last 5</div>
-                  ${formStrip(summary.form_last5 || [])}
-                </div>
+            </div>
+            <div class="footer-note">Registered: ${fmtDateTime(p.registered_at)} | Last active: ${fmtDateTime(p.last_active)}</div>
+          </div>
+
+          <div class="card player-summary-card" style="margin:10px 0 0;">
+            <h3>Form & Trends</h3>
+            <div class="player-quick-summary">
+              <div class="quick-box">
+                <div class="k">W/D/L</div>
+                <div class="v">${esc(summary.wins || 0)}/${esc(summary.draws || 0)}/${esc(summary.losses || 0)}</div>
+              </div>
+              <div class="quick-box">
+                <div class="k">Win Rate</div>
+                <div class="v">${esc(Number(summary.win_rate || 0).toFixed(1))}%</div>
+              </div>
+              <div class="quick-box">
+                <div class="k">Avg Goals</div>
+                <div class="v">${esc(Number(summary.avg_goals_per_match || 0).toFixed(2))}</div>
+              </div>
+              <div class="quick-box">
+                <div class="k">Avg Assists</div>
+                <div class="v">${esc(Number(summary.avg_assists_per_match || 0).toFixed(2))}</div>
+              </div>
+              <div class="quick-form">
+                <div class="k">Last 5</div>
+                ${formStrip(summary.form_last5 || [])}
               </div>
             </div>
           </div>
-          <div class="footer-note">Registered: ${fmtDateTime(p.registered_at)} | Last active: ${fmtDateTime(p.last_active)}</div>
         </div>
         <div class="card" style="margin:0;">
           <h3>Performance Overview</h3>

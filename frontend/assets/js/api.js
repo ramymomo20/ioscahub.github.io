@@ -45,27 +45,16 @@
   }
 
   function assertApiConfigured() {
-    const base = resolveApiBase();
-    if (!base) {
-      throw new Error(
-        'Hub API URL is not configured. Open once with ?hub_api=https://your-api-domain/api'
-      );
+    let base = resolveApiBase();
+    if (!isUsableApiBase(base)) {
+      base = normalizeApiBase(FALLBACK_API_BASE);
+      if (!window.HUB_CONFIG) window.HUB_CONFIG = {};
+      window.HUB_CONFIG.API_BASE_URL = base;
+      try {
+        localStorage.setItem('IOSCA_HUB_API_BASE_URL', base);
+      } catch (_) {}
     }
-
-    try {
-      const parsed = new URL(base);
-      const host = parsed.hostname.toLowerCase();
-      const path = parsed.pathname.replace(/\/+$/, '');
-
-      // Guard against accidental GitHub Pages/API misconfiguration.
-      if (host.endsWith('github.io') || path === '' || path === '/') {
-        throw new Error();
-      }
-    } catch (_) {
-      throw new Error(
-        'Invalid Hub API URL. Use full URL like https://your-api-domain/api (not a GitHub Pages URL).'
-      );
-    }
+    return base;
   }
 
   function toQuery(params) {
@@ -75,8 +64,8 @@
   }
 
   async function request(path, params) {
-    assertApiConfigured();
-    const url = resolveApiBase() + path + toQuery(params);
+    const base = assertApiConfigured();
+    const url = base + path + toQuery(params);
     const response = await fetch(url, { headers: { 'Accept': 'application/json' } });
     if (!response.ok) {
       const text = await response.text();
