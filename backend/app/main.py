@@ -16,6 +16,13 @@ from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 
 try:
+    from ios_bot.utils.match_performance import get_mvp_data as shared_get_mvp_data
+    from ios_bot.utils.match_performance import rate_player as shared_rate_player
+except Exception:
+    shared_get_mvp_data = None
+    shared_rate_player = None
+
+try:
     from .config import settings
     from .db import db
 except ImportError:
@@ -181,6 +188,17 @@ def _merge_match_player_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]
     return list(merged.values())
 
 
+def _attach_match_ratings(players: list[dict[str, Any]]) -> None:
+    if not shared_rate_player:
+        return
+    for player in players:
+        try:
+            rating = shared_rate_player(player)
+        except Exception:
+            rating = None
+        player["match_rating"] = round(float(rating), 2) if isinstance(rating, (int, float)) else None
+
+
 def _player_event_minutes(player_row: dict[str, Any], keys: list[str]) -> list[int]:
     raw = player_row.get("event_timestamps") or {}
     if isinstance(raw, str):
@@ -299,7 +317,14 @@ def _build_team_event_items(team_rows: list[dict[str, Any]]) -> list[dict[str, A
         red_count = int(row.get("red_cards") or row.get("redCards") or 0)
         red_minutes = _player_event_minutes(
             row,
-            ["red", "red_card", "red_cards", "redcard", "redcards", "straight_red", "second_yellow_red"],
+            [
+                "red",
+                "red_card",
+                "red_cards",
+                "redcard",
+                "redcards",
+                "straight_red",
+            ],
         )
         if red_minutes:
             events.append({"kind": "red", "name": name, "minutes": red_minutes, "count": len(red_minutes), "sort_minute": red_minutes[0]})
@@ -759,11 +784,29 @@ async def player_detail(steam_id: str) -> dict[str, Any]:
                 COALESCE(SUM(goals), 0) AS goals,
                 COALESCE(SUM(assists), 0) AS assists,
                 COALESCE(SUM(second_assists), 0) AS second_assists,
+                COALESCE(SUM(shots), 0) AS shots,
+                COALESCE(SUM(shots_on_goal), 0) AS shots_on_goal,
+                COALESCE(SUM(chances_created), 0) AS chances_created,
+                COALESCE(SUM(key_passes), 0) AS key_passes,
+                COALESCE(SUM(passes_attempted), 0) AS passes_attempted,
+                COALESCE(SUM(passes_completed), 0) AS passes_completed,
+                COALESCE(SUM(corners), 0) AS corners,
+                COALESCE(SUM(free_kicks), 0) AS free_kicks,
                 COALESCE(SUM(keeper_saves), 0) AS keeper_saves,
+                COALESCE(SUM(keeper_saves_caught), 0) AS keeper_saves_caught,
+                COALESCE(SUM(goals_conceded), 0) AS goals_conceded,
+                COALESCE(SUM(sliding_tackles_completed), 0) AS sliding_tackles_completed,
                 COALESCE(SUM(tackles), 0) AS tackles,
                 COALESCE(SUM(interceptions), 0) AS interceptions,
+                COALESCE(SUM(fouls), 0) AS fouls,
+                COALESCE(SUM(fouls_suffered), 0) AS fouls_suffered,
+                COALESCE(SUM(offsides), 0) AS offsides,
+                COALESCE(SUM(own_goals), 0) AS own_goals,
                 COALESCE(SUM(yellow_cards), 0) AS yellow_cards,
                 COALESCE(SUM(red_cards), 0) AS red_cards,
+                COALESCE(SUM(penalties), 0) AS penalties,
+                COALESCE(SUM(distance_covered), 0) AS distance_covered,
+                COALESCE(SUM(possession), 0) AS possession,
                 COALESCE(AVG(pass_accuracy), 0) AS avg_pass_accuracy
             FROM PLAYER_MATCH_DATA
             WHERE steam_id = $1
@@ -981,6 +1024,38 @@ async def match_detail(match_id: str) -> dict[str, Any]:
                 side = _infer_side_from_lineup(item, home_lineup_keys, away_lineup_keys)
         grouped[side].append(item)
 
+    all_player_stats = (
+        grouped.get("home", [])
+        + grouped.get("away", [])
+        + grouped.get("neutral", [])
+    )
+    _attach_match_ratings(all_player_stats)
+
+    mvp_payload: dict[str, Any] | None = None
+    if shared_get_mvp_data:
+        try:
+            mvp_payload = shared_get_mvp_data(all_player_stats)
+        except Exception:
+            mvp_payload = None
+
+    if mvp_payload:
+        mvp_name = str(mvp_payload.get("name") or "").strip().lower()
+        mvp_pos = str(mvp_payload.get("position") or "").strip().upper()
+        linked = None
+        for player in all_player_stats:
+            player_name = str(player.get("player_name") or "").strip().lower()
+            player_pos = str(player.get("position") or "").strip().upper()
+            if player_name == mvp_name and (not mvp_pos or player_pos == mvp_pos):
+                linked = player
+                break
+        if linked:
+            mvp_payload = {
+                **mvp_payload,
+                **linked,
+                "mvp_score": mvp_payload.get("score"),
+                "mvp_stats": mvp_payload.get("stats", []),
+            }
+
     return {
         "match": match_payload,
         "player_stats": {
@@ -988,6 +1063,7 @@ async def match_detail(match_id: str) -> dict[str, Any]:
             "away": grouped.get("away", []),
             "neutral": grouped.get("neutral", []),
         },
+        "mvp": mvp_payload,
         "team_events": {
             "home": _build_team_event_items(grouped.get("home", [])),
             "away": _build_team_event_items(grouped.get("away", [])),
@@ -1175,7 +1251,17 @@ async def teams() -> dict[str, Any]:
     payload = _records_to_dicts(rows)
     for item in payload:
         roster = _parse_json(item.get("players"), [])
-        item["player_count"] = len(roster) if isinstance(roster, list) else 0
+        roster_ids: set[str] = set()
+        if isinstance(roster, list):
+            for entry in roster:
+                if isinstance(entry, dict) and entry.get("id") is not None:
+                    rid = str(entry.get("id")).strip()
+                    if rid:
+                        roster_ids.add(rid)
+        captain_id = str(item.get("captain_id") or "").strip()
+        if captain_id:
+            roster_ids.add(captain_id)
+        item["player_count"] = len(roster_ids)
     return {"teams": payload}
 
 
@@ -1192,6 +1278,14 @@ async def team_detail(guild_id: str) -> dict[str, Any]:
         for item in roster_raw if isinstance(roster_raw, list) else []:
             if isinstance(item, dict):
                 roster.append(item)
+
+        # Ensure captain is always present in roster payload, even if omitted in players JSON.
+        captain_id = str(team.get("captain_id") or "").strip()
+        captain_name = str(team.get("captain_name") or "").strip()
+        if captain_id:
+            captain_already_listed = any(str(entry.get("id") or "").strip() == captain_id for entry in roster)
+            if not captain_already_listed:
+                roster.append({"id": captain_id, "name": captain_name or "Captain"})
 
         discord_ids: list[str] = []
         for entry in roster:

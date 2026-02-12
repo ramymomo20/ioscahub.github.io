@@ -564,6 +564,22 @@ tbody tr:hover {
   text-align: center;
 }
 
+.event-rating {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgba(13, 29, 52, 0.92);
+  border: 1px solid rgba(130, 181, 255, 0.42);
+  color: #d9ebff;
+  font-family: "Orbitron", "Rajdhani", sans-serif;
+  font-size: 0.72rem;
+  letter-spacing: 0.25px;
+}
+
 .match-event-line.red {
   color: #ff8b99;
 }
@@ -673,6 +689,37 @@ tbody tr:hover {
   font-size: 0.95rem;
 }
 
+.mvp-stats-grid {
+  position: relative;
+  z-index: 1;
+  margin-top: 9px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.mvp-stat {
+  border: 1px solid rgba(132, 171, 226, 0.35);
+  border-radius: 9px;
+  background: rgba(12, 25, 44, 0.7);
+  padding: 6px 8px;
+  display: grid;
+  gap: 2px;
+}
+
+.mvp-stat strong {
+  color: #f3f8ff;
+  font-size: 1rem;
+  line-height: 1;
+  font-family: "Orbitron", "Rajdhani", sans-serif;
+}
+
+.mvp-stat span {
+  color: #aac7eb;
+  font-size: 0.72rem;
+  line-height: 1.1;
+}
+
 .lineup-pitches {
   margin-top: 12px;
   display: grid;
@@ -778,6 +825,24 @@ tbody tr:hover {
   justify-items: center;
   gap: 2px;
   min-width: 84px;
+}
+
+.pitch-rating-chip {
+  position: absolute;
+  top: -10px;
+  right: -12px;
+  min-width: 28px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgba(9, 24, 45, 0.95);
+  border: 1px solid rgba(134, 182, 255, 0.48);
+  color: #deeeff;
+  font-family: "Orbitron", "Rajdhani", sans-serif;
+  font-size: 0.69rem;
+  line-height: 18px;
+  text-align: center;
+  pointer-events: none;
 }
 
 .pitch-player.empty {
@@ -962,9 +1027,79 @@ tbody tr:hover {
   font-size: 1rem;
 }
 
+.player-team-chip {
+  margin-top: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: 12px;
+  padding: 6px 10px;
+  background: linear-gradient(180deg, rgba(26, 48, 86, 0.88), rgba(14, 28, 54, 0.92));
+}
+
+.player-team-chip img {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  object-fit: cover;
+  border: 1px solid var(--line-soft);
+}
+
+.player-team-chip.empty {
+  background: linear-gradient(180deg, rgba(20, 33, 56, 0.75), rgba(11, 20, 39, 0.82));
+}
+
+.player-team-chip span {
+  font-size: 0.95rem;
+  color: #d7e9ff;
+}
+
 .profile-hero-card .footer-note {
   margin-top: 10px;
   font-size: 0.98rem;
+}
+
+.player-stats-grid {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.player-stat-widget {
+  border: 1px solid var(--line-soft);
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(18, 32, 59, 0.9), rgba(11, 21, 43, 0.94));
+  padding: 10px 12px;
+}
+
+.player-stat-widget h4 {
+  margin: 0 0 8px;
+  font-family: "Orbitron", "Rajdhani", sans-serif;
+  letter-spacing: 0.24px;
+  font-size: 0.95rem;
+}
+
+.player-stat-widget ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 6px;
+}
+
+.player-stat-widget li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: #d7e9ff;
+  font-size: 0.9rem;
+}
+
+.player-stat-widget li strong {
+  color: #f2f7ff;
+  font-weight: 700;
 }
 
 .team-hero-card .team-head {
@@ -1188,6 +1323,10 @@ tbody tr:hover {
   .lineup-pitches {
     grid-template-columns: 1fr;
   }
+
+  .mvp-stats-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 760px) {
@@ -1198,6 +1337,10 @@ tbody tr:hover {
   }
 
   .roster-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .player-stats-grid {
     grid-template-columns: 1fr;
   }
 

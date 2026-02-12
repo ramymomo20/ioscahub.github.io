@@ -17,10 +17,46 @@
     const recent = data.recent_matches || [];
     const team = data.team || {};
     const fallbackAvatar = 'https://cdn.discordapp.com/embed/avatars/0.png';
+    const teamLogoFallback = 'assets/icons/iosca-icon.png';
 
     function fmtRating(value) {
       const n = Number(value);
       return Number.isFinite(n) ? n.toFixed(2) : 'N/A';
+    }
+
+    function num(value) {
+      const n = Number(value);
+      return Number.isFinite(n) ? n : 0;
+    }
+
+    function intNum(value) {
+      return Math.round(num(value));
+    }
+
+    function pct(value, places) {
+      return `${num(value).toFixed(places || 1)}%`;
+    }
+
+    function passRateText() {
+      const attempts = num(totals.passes_attempted);
+      const completed = num(totals.passes_completed);
+      if (attempts <= 0) return '0%';
+      return pct((completed / attempts) * 100, 1);
+    }
+
+    function saveRateText() {
+      const saves = num(totals.keeper_saves);
+      const conceded = num(totals.goals_conceded);
+      const faced = saves + conceded;
+      if (faced <= 0) return '0%';
+      return pct((saves / faced) * 100, 1);
+    }
+
+    function possessionText() {
+      const matches = num(totals.matches_played);
+      if (matches <= 0) return '0%';
+      // Matches existing /view_player presentation style.
+      return pct(num(totals.possession) / (matches * 10), 2);
     }
 
     function resultTag(result) {
@@ -36,6 +72,21 @@
         return `Tournament${match.tournament_name ? `: ${match.tournament_name}` : ''}`;
       }
       return 'Official Mix';
+    }
+
+    function statLine(label, value) {
+      return `<li><span>${esc(label)}</span><strong>${esc(String(value))}</strong></li>`;
+    }
+
+    function categoryCard(title, lines) {
+      return `
+        <article class="player-stat-widget">
+          <h4>${esc(title)}</h4>
+          <ul>
+            ${lines.join('')}
+          </ul>
+        </article>
+      `;
     }
 
     function statSummary(match) {
@@ -67,21 +118,66 @@
               </div>
               <div class="meta">Steam: ${esc(p.steam_id)}${p.steam_name ? ` | ${esc(p.steam_name)}` : ''}</div>
               ${p.steam_profile_url ? `<div class="profile-link"><a target="_blank" rel="noreferrer" href="${esc(p.steam_profile_url)}">Open Steam profile</a></div>` : ''}
+              ${
+                team.guild_id
+                  ? `
+                  <div class="player-team-chip">
+                    <img src="${esc(team.guild_icon || teamLogoFallback)}" alt="${esc(team.guild_name || 'Team')}" onerror="this.onerror=null;this.src='${teamLogoFallback}';">
+                    <span>Current team: <a href="team.html?id=${esc(team.guild_id)}">${esc(team.guild_name || 'Unknown Team')}</a></span>
+                  </div>
+                `
+                  : `<div class="player-team-chip empty"><span>Current team: N/A</span></div>`
+              }
             </div>
           </div>
           <div class="footer-note">Registered: ${fmtDateTime(p.registered_at)} | Last active: ${fmtDateTime(p.last_active)}</div>
         </div>
         <div class="card" style="margin:0;">
-          <h3>Profile totals</h3>
+          <h3>Performance Overview</h3>
           <div class="grid cols-2">
-            <div class="stat"><div class="label">Matches</div><div class="value">${esc(totals.matches_played || 0)}</div></div>
-            <div class="stat"><div class="label">Goals</div><div class="value">${esc(totals.goals || 0)}</div></div>
-            <div class="stat"><div class="label">Assists</div><div class="value">${esc(totals.assists || 0)}</div></div>
-            <div class="stat"><div class="label">Saves</div><div class="value">${esc(totals.keeper_saves || 0)}</div></div>
-            <div class="stat"><div class="label">Tackles</div><div class="value">${esc(totals.tackles || 0)}</div></div>
-            <div class="stat"><div class="label">Interceptions</div><div class="value">${esc(totals.interceptions || 0)}</div></div>
+            <div class="stat"><div class="label">Matches</div><div class="value">${esc(intNum(totals.matches_played))}</div></div>
+            <div class="stat"><div class="label">Pass Accuracy</div><div class="value">${esc(pct(totals.avg_pass_accuracy, 1))}</div></div>
           </div>
-          ${team.guild_id ? `<div style="margin-top:10px;" class="meta">Current team: <a href="team.html?id=${esc(team.guild_id)}">${esc(team.guild_name)}</a></div>` : '<div style="margin-top:10px;" class="meta">Current team: N/A</div>'}
+          <div class="player-stats-grid">
+            ${categoryCard('Attacking', [
+              statLine('Goals', intNum(totals.goals)),
+              statLine('Assists', intNum(totals.assists)),
+              statLine('2nd Assists', intNum(totals.second_assists)),
+              statLine('Shots', intNum(totals.shots)),
+              statLine('Shots on Goal', intNum(totals.shots_on_goal)),
+              statLine('Offsides', intNum(totals.offsides))
+            ])}
+            ${categoryCard('Playmaking', [
+              statLine('Chances Created', intNum(totals.chances_created)),
+              statLine('Key Passes', intNum(totals.key_passes)),
+              statLine('Passes', intNum(totals.passes_attempted)),
+              statLine('Passes Completed', intNum(totals.passes_completed)),
+              statLine('Corners', intNum(totals.corners)),
+              statLine('Free Kicks', intNum(totals.free_kicks)),
+              statLine('Pass Rate', passRateText())
+            ])}
+            ${categoryCard('Defensive', [
+              statLine('Interceptions', intNum(totals.interceptions)),
+              statLine('Tackles', intNum(totals.sliding_tackles_completed)),
+              statLine('Tackle Attempts', intNum(totals.tackles)),
+              statLine('Fouls', intNum(totals.fouls)),
+              statLine('Fouls Suffered', intNum(totals.fouls_suffered)),
+              statLine('Own Goals', intNum(totals.own_goals))
+            ])}
+            ${categoryCard('Goalkeeper', [
+              statLine('Saves', intNum(totals.keeper_saves)),
+              statLine('Saves Caught', intNum(totals.keeper_saves_caught)),
+              statLine('Goals Conceded', intNum(totals.goals_conceded)),
+              statLine('Save Rate', saveRateText())
+            ])}
+            ${categoryCard('Discipline & Physical', [
+              statLine('Yellow Cards', intNum(totals.yellow_cards)),
+              statLine('Red Cards', intNum(totals.red_cards)),
+              statLine('Penalties', intNum(totals.penalties)),
+              statLine('Distance Covered', `${intNum(totals.distance_covered)} m`),
+              statLine('Possession', possessionText())
+            ])}
+          </div>
         </div>
       </div>
       <div class="card" style="margin-top:10px;">

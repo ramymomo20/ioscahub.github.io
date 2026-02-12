@@ -75,6 +75,68 @@
     return value.slice(0, Math.max(1, limit - 3)) + "...";
   }
 
+  function toNum(value) {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : 0;
+  }
+
+  function pickNum(player, keys) {
+    for (const key of keys) {
+      if (player && player[key] !== undefined && player[key] !== null) return toNum(player[key]);
+    }
+    return 0;
+  }
+
+  function playerRating10(player) {
+    const provided = Number(
+      player && (
+        player.match_rating ??
+        player.matchRating ??
+        player.matched_rating ??
+        player._rating ??
+        player.mvp_score ??
+        player.score
+      )
+    );
+    if (Number.isFinite(provided)) {
+      const clampedProvided = Math.max(3, Math.min(10, provided));
+      return Math.round(clampedProvided * 10) / 10;
+    }
+
+    const goals = pickNum(player, ["goals"]);
+    const assists = pickNum(player, ["assists"]);
+    const saves = pickNum(player, ["keeper_saves", "keeperSaves"]);
+    const interceptions = pickNum(player, ["interceptions"]);
+    const tackles = pickNum(player, ["tackles", "sliding_tackles_completed", "slidingTacklesCompleted"]);
+    const chances = pickNum(player, ["chances_created", "chancesCreated"]);
+    const keyPasses = pickNum(player, ["key_passes", "keyPasses"]);
+    const shotsOnGoal = pickNum(player, ["shots_on_goal", "shotsOnGoal"]);
+    const passesCompleted = pickNum(player, ["passes_completed", "passesCompleted"]);
+    const reds = pickNum(player, ["red_cards", "redCards"]);
+    const yellows = pickNum(player, ["yellow_cards", "yellowCards"]);
+    const ownGoals = pickNum(player, ["own_goals", "ownGoals"]);
+    const goalsConceded = pickNum(player, ["goals_conceded", "goalsConceded"]);
+
+    const raw =
+      5.5 +
+      goals * 1.1 +
+      assists * 0.8 +
+      saves * 0.24 +
+      interceptions * 0.18 +
+      tackles * 0.14 +
+      chances * 0.22 +
+      keyPasses * 0.18 +
+      shotsOnGoal * 0.11 +
+      passesCompleted * 0.004 -
+      reds * 1.9 -
+      yellows * 0.35 -
+      ownGoals * 1.2 -
+      goalsConceded * 0.05;
+
+    const clamped = Math.max(3, Math.min(10, raw));
+    return Math.round(clamped * 10) / 10;
+  }
+
   function parseLineupEntries(lineupData) {
     const entries = [];
     if (!Array.isArray(lineupData)) return entries;
@@ -169,35 +231,55 @@
     for (const player of sideStats || []) {
       const name = safeName(player);
       const eventMap = getEventMap(player);
+      const rating = playerRating10(player);
 
       const goalMinutes = getMinutes(eventMap, ["goal", "goals"]);
       if (goalMinutes.length) {
-        lines.push({ kind: "goal", name, minutes: goalMinutes, sortMinute: goalMinutes[0] });
+        lines.push({ kind: "goal", name, minutes: goalMinutes, sortMinute: goalMinutes[0], rating });
       } else {
         const count = Number(player.goals || 0);
-        if (count > 0) lines.push({ kind: "goal", name, count, sortMinute: 999 });
+        if (count > 0) lines.push({ kind: "goal", name, count, sortMinute: 999, rating });
       }
 
       const yellowMinutes = getMinutes(eventMap, ["yellow", "yellow_card", "yellow_cards"]);
       if (yellowMinutes.length) {
-        lines.push({ kind: "yellow", name, minutes: yellowMinutes, sortMinute: yellowMinutes[0] });
+        lines.push({ kind: "yellow", name, minutes: yellowMinutes, sortMinute: yellowMinutes[0], rating });
       } else {
         const count = Number(player.yellow_cards || player.yellowCards || 0);
-        if (count > 0) lines.push({ kind: "yellow", name, count, sortMinute: 999 });
+        if (count > 0) lines.push({ kind: "yellow", name, count, sortMinute: 999, rating });
       }
 
       const redCount = Number(player.red_cards || player.redCards || 0);
-      let redMinutes = getMinutes(eventMap, ["red", "red_card", "red_cards", "redcard", "redcards", "straight_red"]);
+      let redMinutes = getMinutes(eventMap, [
+        "red",
+        "red_card",
+        "red_cards",
+        "redcard",
+        "redcards",
+        "straight_red"
+      ]);
       if (redMinutes.length) {
-        lines.push({ kind: "red", name, minutes: redMinutes, sortMinute: redMinutes[0] });
+        lines.push({ kind: "red", name, minutes: redMinutes, sortMinute: redMinutes[0], rating });
       } else {
         const count = redCount;
-        if (count > 0) lines.push({ kind: "red", name, count, sortMinute: 999 });
+        if (count > 0) lines.push({ kind: "red", name, count, sortMinute: 999, rating });
       }
     }
 
     lines.sort((a, b) => (a.sortMinute || 999) - (b.sortMinute || 999) || a.name.localeCompare(b.name));
     return lines.slice(0, 12);
+  }
+
+  function attachEventRatings(items, sideStats) {
+    const byName = new Map();
+    for (const player of sideStats || []) {
+      byName.set(normName(safeName(player)), player);
+    }
+    return (items || []).map((item) => {
+      const linked = byName.get(normName(item.name || ""));
+      const rating = linked ? playerRating10(linked) : null;
+      return { ...item, rating };
+    });
   }
 
   function eventLineHtml(item) {
@@ -206,10 +288,14 @@
       ? " " + item.minutes.map((m) => `${m}'`).join(", ")
       : "";
     const countText = minuteText ? "" : (item.count > 1 ? " x" + item.count : "");
+    const ratingBadge = Number.isFinite(item.rating)
+      ? `<span class="event-rating">${esc(item.rating.toFixed(1))}</span>`
+      : "";
     return `
       <div class="match-event-line ${esc(item.kind)}">
         <img class="event-icon" src="${esc(icon)}" alt="${esc(item.kind)}">
         <span>${esc(item.name)}${esc(minuteText)}${esc(countText)}</span>
+        ${ratingBadge}
       </div>
     `;
   }
@@ -287,8 +373,10 @@
       }
 
       const stats = resolvePlayerStats(entry, lookup);
+      const rating = stats ? playerRating10(stats) : null;
       return `
         <div class="pitch-player" style="left:${slot.x}%;top:${slot.y}%;">
+          ${Number.isFinite(rating) ? `<div class="pitch-rating-chip">${esc(rating.toFixed(1))}</div>` : ""}
           <div class="pitch-jersey">${esc(slot.pos)}</div>
           <div class="pitch-player-name">${esc(truncateName(entry.name, 16))}</div>
           ${playerStatChips(stats)}
@@ -322,35 +410,43 @@
     if (!allStats.length) return null;
 
     const scored = allStats.map((player) => {
-      const goals = Number(player.goals || 0);
-      const assists = Number(player.assists || 0);
-      const saves = Number(player.keeper_saves || 0);
-      const interceptions = Number(player.interceptions || 0);
-      const tackles = Number(player.tackles || 0);
-      const chances = Number(player.chances_created || 0);
-      const keyPasses = Number(player.key_passes || 0);
-      const reds = Number(player.red_cards || 0);
-      const yellows = Number(player.yellow_cards || 0);
-
-      const score =
-        goals * 4 +
-        assists * 3 +
-        saves * 1.7 +
-        interceptions * 1.25 +
-        tackles * 1.05 +
-        chances * 1.2 +
-        keyPasses * 1.0 -
-        reds * 3.4 -
-        yellows * 1.1;
-
-      return { ...player, _score: score };
-    }).sort((a, b) => b._score - a._score);
+      const rating = playerRating10(player);
+      const tieBreak =
+        pickNum(player, ["goals"]) * 4 +
+        pickNum(player, ["assists"]) * 3 +
+        pickNum(player, ["interceptions"]) +
+        pickNum(player, ["keeper_saves", "keeperSaves"]);
+      return { ...player, _rating: rating, _tieBreak: tieBreak };
+    }).sort((a, b) => (b._rating - a._rating) || (b._tieBreak - a._tieBreak));
 
     return scored[0] || null;
   }
 
+  function resolveMvp(allStats, apiMvp) {
+    if (apiMvp && typeof apiMvp === "object") {
+      const merged = { ...apiMvp };
+      const targetName = normName(apiMvp.player_name || apiMvp.name || "");
+      const targetPos = String(apiMvp.position || "").toUpperCase();
+      if (targetName) {
+        const linked = (allStats || []).find((player) => {
+          const playerName = normName(player.player_name || player.name || "");
+          if (!playerName || playerName !== targetName) return false;
+          if (!targetPos) return true;
+          return String(player.position || "").toUpperCase() === targetPos;
+        });
+        if (linked) Object.assign(merged, linked);
+      }
+      merged._rating = playerRating10(merged);
+      return merged;
+    }
+    return computeMvp(allStats);
+  }
+
   function mvpReason(player) {
     if (!player) return "No MVP data available for this match.";
+    if (Array.isArray(player.mvp_stats) && player.mvp_stats.length) {
+      return player.mvp_stats.join(" | ");
+    }
     const goals = Number(player.goals || 0);
     if (goals >= 3) return "Hat-trick performance.";
     if (goals > 0) return `${goals} goal${goals === 1 ? "" : "s"} in the match.`;
@@ -375,6 +471,30 @@
 
     const playerName = safeName(mvp);
     const position = String(mvp.position || "N/A").toUpperCase();
+    const rating = Number.isFinite(mvp._rating) ? mvp._rating : playerRating10(mvp);
+
+    const mvpStats = [
+      { label: "Goals", value: pickNum(mvp, ["goals"]) },
+      { label: "Assists", value: pickNum(mvp, ["assists"]) },
+      { label: "Saves", value: pickNum(mvp, ["keeper_saves", "keeperSaves"]) },
+      { label: "Interceptions", value: pickNum(mvp, ["interceptions"]) },
+      { label: "Tackles", value: pickNum(mvp, ["tackles", "sliding_tackles_completed", "slidingTacklesCompleted"]) },
+      { label: "Key Passes", value: pickNum(mvp, ["key_passes", "keyPasses"]) }
+    ].filter((item) => item.value > 0).slice(0, 6);
+
+    const statsHtml = mvpStats.length
+      ? mvpStats.map((item) => `
+          <div class="mvp-stat">
+            <strong>${esc(String(item.value))}</strong>
+            <span>${esc(item.label)}</span>
+          </div>
+        `).join("")
+      : `
+          <div class="mvp-stat">
+            <strong>0</strong>
+            <span>Key stats</span>
+          </div>
+        `;
 
     return `
       <section class="mvp-widget">
@@ -384,10 +504,12 @@
             <img src="assets/icons/gold-medal-icon.png" alt="MVP medal">
             <span>MVP</span>
           </div>
+          <div class="mvp-rating">${esc(rating.toFixed(1))}/10</div>
         </div>
         <div class="mvp-name">${esc(playerName)}</div>
         <div class="mvp-sub">${esc(position)}</div>
         <div class="mvp-reason">${esc(mvpReason(mvp))}</div>
+        <div class="mvp-stats-grid">${statsHtml}</div>
       </section>
     `;
   }
@@ -406,15 +528,15 @@
       const whenLabel = shortWhenLabel(match.datetime);
       const apiHomeEvents = data.team_events && Array.isArray(data.team_events.home) ? data.team_events.home : [];
       const apiAwayEvents = data.team_events && Array.isArray(data.team_events.away) ? data.team_events.away : [];
-      const homeEvents = apiHomeEvents.length ? apiHomeEvents : buildEventLines(homeStats);
-      const awayEvents = apiAwayEvents.length ? apiAwayEvents : buildEventLines(awayStats);
+      const homeEvents = attachEventRatings(apiHomeEvents.length ? apiHomeEvents : buildEventLines(homeStats), homeStats);
+      const awayEvents = attachEventRatings(apiAwayEvents.length ? apiAwayEvents : buildEventLines(awayStats), awayStats);
       const hasEvents = homeEvents.length > 0 || awayEvents.length > 0;
 
       const homeLineup = parseLineupEntries(match.home_lineup || []);
       const awayLineup = parseLineupEntries(match.away_lineup || []);
       const homeLookup = buildStatsLookup(homeStats);
       const awayLookup = buildStatsLookup(awayStats);
-      const mvp = computeMvp(allStats);
+      const mvp = resolveMvp(allStats, data.mvp || null);
 
       page.innerHTML = `
         <section class="match-panel">
