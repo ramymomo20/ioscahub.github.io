@@ -33,20 +33,31 @@
       return Math.round(num(value));
     }
 
+    function totalNum(keys) {
+      for (const key of keys || []) {
+        if (totals[key] !== undefined && totals[key] !== null) return num(totals[key]);
+      }
+      return 0;
+    }
+
+    function totalInt(keys) {
+      return Math.round(totalNum(keys));
+    }
+
     function pct(value, places) {
       return `${num(value).toFixed(places || 1)}%`;
     }
 
     function passRateText() {
-      const attempts = num(totals.passes_attempted);
-      const completed = num(totals.passes_completed);
+      const attempts = totalNum(['passes_attempted', 'passes']);
+      const completed = totalNum(['passes_completed', 'passes_completed_total']);
       if (attempts <= 0) return '0%';
       return pct((completed / attempts) * 100, 1);
     }
 
     function saveRateText() {
-      const saves = num(totals.keeper_saves);
-      const conceded = num(totals.goals_conceded);
+      const saves = totalNum(['keeper_saves', 'keeperSaves']);
+      const conceded = totalNum(['goals_conceded', 'goalsConceded']);
       const faced = saves + conceded;
       if (faced <= 0) return '0%';
       return pct((saves / faced) * 100, 1);
@@ -79,14 +90,26 @@
     }
 
     function categoryCard(title, lines) {
+      const finalLines = lines.length ? lines : [statLine('Data', 'No recorded data')];
       return `
         <article class="player-stat-widget">
           <h4>${esc(title)}</h4>
           <ul>
-            ${lines.join('')}
+            ${finalLines.join('')}
           </ul>
         </article>
       `;
+    }
+
+    function buildNumericLines(defs) {
+      const rows = [];
+      for (const def of defs) {
+        const value = totalInt(def.keys);
+        if (value > 0 || def.keepWhenZero) {
+          rows.push(statLine(def.label, value));
+        }
+      }
+      return rows;
     }
 
     function statSummary(match) {
@@ -100,7 +123,7 @@
     }
 
     page.innerHTML = `
-      <div class="grid cols-2">
+      <div class="grid cols-2 player-top-grid">
         <div class="card profile-hero-card" style="margin:0;">
           <div class="profile-head">
             <img class="profile-avatar-lg" src="${esc(p.display_avatar_url || p.steam_avatar_url || p.avatar_url || p.avatar_fallback_url || fallbackAvatar)}" alt="avatar" onerror="this.onerror=null;this.src='${fallbackAvatar}';">
@@ -135,46 +158,54 @@
         <div class="card" style="margin:0;">
           <h3>Performance Overview</h3>
           <div class="grid cols-2">
-            <div class="stat"><div class="label">Matches</div><div class="value">${esc(intNum(totals.matches_played))}</div></div>
+            <div class="stat"><div class="label">Matches</div><div class="value">${esc(totalInt(['matches_played']))}</div></div>
             <div class="stat"><div class="label">Pass Accuracy</div><div class="value">${esc(pct(totals.avg_pass_accuracy, 1))}</div></div>
           </div>
           <div class="player-stats-grid">
-            ${categoryCard('Attacking', [
-              statLine('Goals', intNum(totals.goals)),
-              statLine('Assists', intNum(totals.assists)),
-              statLine('2nd Assists', intNum(totals.second_assists)),
-              statLine('Shots', intNum(totals.shots)),
-              statLine('Shots on Goal', intNum(totals.shots_on_goal)),
-              statLine('Offsides', intNum(totals.offsides))
-            ])}
+            ${categoryCard('Attacking', buildNumericLines([
+              { label: 'Goals', keys: ['goals'] },
+              { label: 'Assists', keys: ['assists'] },
+              { label: '2nd Assists', keys: ['second_assists', 'secondAssists'] },
+              { label: 'Shots', keys: ['shots'] },
+              { label: 'Shots on Goal', keys: ['shots_on_goal', 'shotsOnGoal'] },
+              { label: 'Offsides', keys: ['offsides'] }
+            ]))}
             ${categoryCard('Playmaking', [
-              statLine('Chances Created', intNum(totals.chances_created)),
-              statLine('Key Passes', intNum(totals.key_passes)),
-              statLine('Passes', intNum(totals.passes_attempted)),
-              statLine('Passes Completed', intNum(totals.passes_completed)),
-              statLine('Corners', intNum(totals.corners)),
-              statLine('Free Kicks', intNum(totals.free_kicks)),
+              ...buildNumericLines([
+                { label: 'Chances Created', keys: ['chances_created', 'chancesCreated'] },
+                { label: 'Key Passes', keys: ['key_passes', 'keyPasses'] },
+                { label: 'Passes', keys: ['passes_attempted', 'passes'] },
+                { label: 'Passes Completed', keys: ['passes_completed', 'passesCompleted'] },
+                { label: 'Corners', keys: ['corners'] },
+                { label: 'Free Kicks', keys: ['free_kicks', 'freeKicks'] }
+              ]),
               statLine('Pass Rate', passRateText())
             ])}
-            ${categoryCard('Defensive', [
-              statLine('Interceptions', intNum(totals.interceptions)),
-              statLine('Tackles', intNum(totals.sliding_tackles_completed)),
-              statLine('Tackle Attempts', intNum(totals.tackles)),
-              statLine('Fouls', intNum(totals.fouls)),
-              statLine('Fouls Suffered', intNum(totals.fouls_suffered)),
-              statLine('Own Goals', intNum(totals.own_goals))
-            ])}
+            ${categoryCard('Defensive', buildNumericLines([
+              { label: 'Interceptions', keys: ['interceptions'] },
+              { label: 'Tackles', keys: ['sliding_tackles_completed', 'slidingTacklesCompleted', 'tackles'] },
+              { label: 'Tackle Attempts', keys: ['tackles', 'sliding_tackles'] },
+              { label: 'Fouls', keys: ['fouls'] },
+              { label: 'Fouls Suffered', keys: ['fouls_suffered', 'foulsSuffered'] },
+              { label: 'Own Goals', keys: ['own_goals', 'ownGoals'] }
+            ]))}
             ${categoryCard('Goalkeeper', [
-              statLine('Saves', intNum(totals.keeper_saves)),
-              statLine('Saves Caught', intNum(totals.keeper_saves_caught)),
-              statLine('Goals Conceded', intNum(totals.goals_conceded)),
+              ...buildNumericLines([
+                { label: 'Saves', keys: ['keeper_saves', 'keeperSaves'] },
+                { label: 'Saves Caught', keys: ['keeper_saves_caught', 'keeperSavesCaught'] },
+                { label: 'Goals Conceded', keys: ['goals_conceded', 'goalsConceded'] }
+              ]),
               statLine('Save Rate', saveRateText())
             ])}
             ${categoryCard('Discipline & Physical', [
-              statLine('Yellow Cards', intNum(totals.yellow_cards)),
-              statLine('Red Cards', intNum(totals.red_cards)),
-              statLine('Penalties', intNum(totals.penalties)),
-              statLine('Distance Covered', `${intNum(totals.distance_covered)} m`),
+              ...buildNumericLines([
+                { label: 'Yellow Cards', keys: ['yellow_cards', 'yellowCards'] },
+                { label: 'Red Cards', keys: ['red_cards', 'redCards'] },
+                { label: 'Penalties', keys: ['penalties'] }
+              ]),
+              ...(totalInt(['distance_covered', 'distanceCovered']) > 0
+                ? [statLine('Distance Covered', `${totalInt(['distance_covered', 'distanceCovered'])} m`)]
+                : []),
               statLine('Possession', possessionText())
             ])}
           </div>

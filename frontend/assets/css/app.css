@@ -976,6 +976,10 @@ tbody tr:hover {
   gap: 14px;
 }
 
+.player-top-grid {
+  align-items: start;
+}
+
 .profile-avatar-lg {
   width: 126px;
   height: 126px;

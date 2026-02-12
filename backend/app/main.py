@@ -1359,6 +1359,8 @@ async def team_detail(guild_id: str) -> dict[str, Any]:
             SELECT
                 m.id,
                 m.datetime,
+                m.home_guild_id,
+                m.away_guild_id,
                 COALESCE(ht.guild_name, m.home_team_name) AS home_team_name,
                 COALESCE(at.guild_name, m.away_team_name) AS away_team_name,
                 COALESCE(ht.guild_icon, '') AS home_team_icon,

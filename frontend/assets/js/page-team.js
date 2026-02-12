@@ -32,6 +32,27 @@
       return Number.isFinite(n) ? n.toFixed(2) : 'N/A';
     }
 
+    function recentResult(match) {
+      const homeScore = Number(match.home_score || 0);
+      const awayScore = Number(match.away_score || 0);
+      const teamId = String(id || '');
+      const homeId = String(match.home_guild_id || '');
+      const awayId = String(match.away_guild_id || '');
+
+      if (homeScore === awayScore) return 'D';
+      if (teamId && homeId === teamId) return homeScore > awayScore ? 'W' : 'L';
+      if (teamId && awayId === teamId) return awayScore > homeScore ? 'W' : 'L';
+      return '-';
+    }
+
+    function resultBadge(result) {
+      const value = String(result || '-').toUpperCase();
+      if (value === 'W') return '<span class="form-badge w">W</span>';
+      if (value === 'D') return '<span class="form-badge d">D</span>';
+      if (value === 'L') return '<span class="form-badge l">L</span>';
+      return '<span class="form-badge">-</span>';
+    }
+
     const groups = {
       gk: { label: 'Goalkeepers', items: [] },
       def: { label: 'Defenders', items: [] },
@@ -129,7 +150,7 @@
         <div class="list">
           ${recent.length ? recent.map((m) => `
             <div class="item">
-              <div class="meta">${fmtDateTime(m.datetime)}</div>
+              <div class="meta">${resultBadge(recentResult(m))} ${fmtDateTime(m.datetime)}</div>
               <div><a href="match.html?id=${esc(m.id)}">${esc(m.home_team_name)} ${esc(m.home_score)} - ${esc(m.away_score)} ${esc(m.away_team_name)}</a></div>
             </div>
           `).join('') : '<div class="empty">No matches yet.</div>'}
