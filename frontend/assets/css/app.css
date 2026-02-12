@@ -289,6 +289,64 @@ a:hover {
   margin-top: 2px;
 }
 
+.home-top-note {
+  margin-bottom: 8px;
+  color: #bcd8ff;
+  font-size: 1.02rem;
+}
+
+.home-action-grid {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.home-action-card {
+  border: 1px solid var(--line-soft);
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(21, 38, 69, 0.92), rgba(11, 23, 45, 0.95));
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 158px;
+}
+
+.home-action-card h3 {
+  margin: 0;
+  font-family: "Orbitron", "Rajdhani", sans-serif;
+  letter-spacing: 0.3px;
+  font-size: 1rem;
+}
+
+.home-action-card p {
+  margin: 0;
+  color: #bcd2f3;
+  font-size: 0.92rem;
+  line-height: 1.2;
+  flex: 1;
+}
+
+.home-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(131, 192, 255, 0.38);
+  border-radius: 10px;
+  padding: 7px 10px;
+  color: #d9ecff;
+  background: linear-gradient(180deg, rgba(48, 102, 196, 0.35), rgba(17, 40, 82, 0.48));
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.home-action-btn:hover {
+  text-decoration: none;
+  border-color: rgba(131, 192, 255, 0.7);
+  box-shadow: 0 8px 20px rgba(10, 28, 59, 0.35);
+}
+
 .table-wrap {
   overflow-x: auto;
 }
@@ -1059,6 +1117,65 @@ tbody tr:hover {
   color: #d7e9ff;
 }
 
+.player-role-asset-chip {
+  margin-top: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  border: 1px solid var(--line-soft);
+  border-radius: 12px;
+  padding: 6px 10px;
+  background: linear-gradient(180deg, rgba(31, 61, 102, 0.88), rgba(15, 31, 58, 0.92));
+}
+
+.player-role-asset-chip strong {
+  color: #cce5ff;
+  margin-right: 4px;
+}
+
+.player-role-emoji {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+}
+
+.player-role-emoji-text {
+  font-size: 1.15rem;
+  line-height: 1;
+}
+
+.player-quick-summary {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.player-quick-summary .quick-box,
+.player-quick-summary .quick-form {
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  background: linear-gradient(180deg, rgba(22, 41, 73, 0.92), rgba(11, 25, 49, 0.94));
+  padding: 7px 9px;
+}
+
+.player-quick-summary .k {
+  color: #bcd6fa;
+  font-size: 0.82rem;
+}
+
+.player-quick-summary .v {
+  margin-top: 2px;
+  color: #ecf5ff;
+  font-size: 1.04rem;
+  font-weight: 700;
+}
+
+.player-quick-summary .quick-form .form-strip {
+  margin-top: 3px;
+  margin-left: 0;
+}
+
 .profile-hero-card .footer-note {
   margin-top: 10px;
   font-size: 0.98rem;
@@ -1156,6 +1273,74 @@ tbody tr:hover {
   font-size: 1.16rem;
   font-weight: 700;
   line-height: 1.2;
+}
+
+.team-summary-widgets {
+  margin-top: 9px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.team-summary-widget {
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  background: linear-gradient(180deg, rgba(22, 41, 73, 0.9), rgba(11, 25, 49, 0.94));
+  padding: 8px 9px;
+}
+
+.team-summary-widget .k {
+  color: #bcd6fa;
+  font-size: 0.82rem;
+}
+
+.team-summary-widget .v {
+  margin-top: 2px;
+  color: #ecf5ff;
+  font-size: 1.03rem;
+  font-weight: 700;
+}
+
+.mini-match-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.mini-match-link:hover {
+  text-decoration: none;
+}
+
+.mini-team {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.mini-team-logo {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 1px solid rgba(160, 195, 255, 0.35);
+  background: #061028;
+}
+
+.mini-team-name {
+  display: inline-block;
+  max-width: 220px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mini-team-name.is-home {
+  color: #b8dcff;
+}
+
+.mini-team-name.is-away {
+  color: #c9e7ff;
 }
 
 .roster-groups {
@@ -1309,6 +1494,14 @@ tbody tr:hover {
   .lineup-grid {
     grid-template-columns: 1fr;
   }
+
+  .home-action-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .team-summary-widgets {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 860px) {
@@ -1340,12 +1533,28 @@ tbody tr:hover {
     grid-template-columns: 1fr;
   }
 
+  .home-action-grid {
+    grid-template-columns: 1fr;
+  }
+
   .roster-grid {
     grid-template-columns: 1fr;
   }
 
   .player-stats-grid {
     grid-template-columns: 1fr;
+  }
+
+  .player-quick-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .team-summary-widgets {
+    grid-template-columns: 1fr;
+  }
+
+  .mini-team-name {
+    max-width: 118px;
   }
 
   .hero-score {

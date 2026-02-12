@@ -335,11 +335,16 @@ async def _run(db_url: str, output_file: Path, matches_limit: int) -> int:
 
 
 def main() -> int:
+    default_db_url = (
+        os.getenv("SUPABASE_DB_URL")
+        or os.getenv("SUPABASE_POOLER_URL")
+        or ""
+    ).strip()
     parser = argparse.ArgumentParser(description="Export IOSCA hub JSON for GitHub Pages.")
     parser.add_argument(
         "--db-url",
-        default=os.getenv("SUPABASE_DB_URL"),
-        help="Postgres connection string. Defaults to SUPABASE_DB_URL.",
+        default=default_db_url,
+        help="Postgres connection string. Defaults to SUPABASE_DB_URL, then SUPABASE_POOLER_URL.",
     )
     parser.add_argument(
         "--out",
@@ -354,11 +359,12 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    if not args.db_url:
-        print("Missing DB URL. Set SUPABASE_DB_URL or pass --db-url.")
+    db_url = str(args.db_url or "").strip()
+    if not db_url:
+        print("Missing DB URL. Set SUPABASE_DB_URL or SUPABASE_POOLER_URL, or pass --db-url.")
         return 2
 
-    return asyncio.run(_run(args.db_url, Path(args.out), args.matches_limit))
+    return asyncio.run(_run(db_url, Path(args.out), args.matches_limit))
 
 
 if __name__ == "__main__":

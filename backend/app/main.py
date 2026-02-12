@@ -229,6 +229,66 @@ def _norm_text_key(value: Any) -> str:
     return re.sub(r"[^a-z0-9]+", "", str(value or "").lower())
 
 
+def _position_search_tokens(position: Any) -> list[str]:
+    pos = str(position or "").strip().upper()
+    if not pos:
+        return []
+    tokens: set[str] = {pos.lower()}
+    if pos == "GK":
+        tokens.update({"gk", "goalkeeper", "keeper", "portero"})
+    elif pos in {"LB", "RB", "CB", "SW", "LWB", "RWB", "DEF"}:
+        tokens.update({"def", "defender", "defensa", "back"})
+    elif pos in {"LM", "RM", "CM", "CDM", "CAM", "MID"}:
+        tokens.update({"mid", "midfielder", "medio", "cm", "cam", "cdm"})
+    elif pos in {"LW", "RW", "CF", "ST", "ATT"}:
+        tokens.update({"att", "forward", "striker", "wing", "attacker", "delantero"})
+    return sorted(tokens)
+
+
+def _pick_position_asset(
+    assets: list[dict[str, Any]],
+    position: Any,
+) -> dict[str, Any] | None:
+    tokens = _position_search_tokens(position)
+    if not assets or not tokens:
+        return None
+
+    best_asset: dict[str, Any] | None = None
+    best_score = -1
+
+    for asset in assets:
+        key = str(asset.get("asset_key") or "").lower()
+        name = str(asset.get("asset_name") or "").lower()
+        blob = f"{key} {name}"
+        score = 0
+        for token in tokens:
+            if token == key:
+                score += 6
+            if f"{token}_" in key or f"_{token}" in key:
+                score += 4
+            if token in key:
+                score += 3
+            if token in name:
+                score += 2
+            if token in blob:
+                score += 1
+
+        if score > best_score:
+            best_score = score
+            best_asset = asset
+
+    return best_asset if best_score > 0 else None
+
+
+def _asset_emoji_url(asset: dict[str, Any] | None) -> str | None:
+    if not asset:
+        return None
+    raw_discord_id = str(asset.get("discord_id") or "").strip()
+    if not raw_discord_id.isdigit():
+        return None
+    return f"https://cdn.discordapp.com/emojis/{raw_discord_id}.png?size=64&quality=lossless"
+
+
 def _steam_aliases(steam_id: Any) -> set[str]:
     raw = str(steam_id or "").strip()
     if not raw:
@@ -876,6 +936,72 @@ async def player_detail(steam_id: str) -> dict[str, Any]:
             steam_id,
         )
 
+        outcome = await conn.fetchrow(
+            """
+            SELECT
+                COUNT(*) AS matches_played,
+                COALESCE(
+                    SUM(
+                        CASE
+                            WHEN pmd.guild_id::text = ms.home_guild_id::text AND ms.home_score > ms.away_score THEN 1
+                            WHEN pmd.guild_id::text = ms.away_guild_id::text AND ms.away_score > ms.home_score THEN 1
+                            ELSE 0
+                        END
+                    ),
+                    0
+                ) AS wins,
+                COALESCE(SUM(CASE WHEN ms.home_score = ms.away_score THEN 1 ELSE 0 END), 0) AS draws,
+                COALESCE(
+                    SUM(
+                        CASE
+                            WHEN pmd.guild_id::text = ms.home_guild_id::text AND ms.home_score < ms.away_score THEN 1
+                            WHEN pmd.guild_id::text = ms.away_guild_id::text AND ms.away_score < ms.home_score THEN 1
+                            ELSE 0
+                        END
+                    ),
+                    0
+                ) AS losses
+            FROM PLAYER_MATCH_DATA pmd
+            JOIN MATCH_STATS ms
+              ON (
+                   pmd.match_id::text = ms.match_id::text
+                   OR (CASE WHEN pmd.match_id::text ~ '^[0-9]+$' THEN pmd.match_id::bigint END) = ms.id::bigint
+              )
+            WHERE pmd.steam_id = $1
+            """,
+            steam_id,
+        )
+
+        role_assets: list[dict[str, Any]] = []
+        emoji_assets: list[dict[str, Any]] = []
+        try:
+            main_discord = await conn.fetchrow(
+                "SELECT guild_id FROM MAIN_DISCORD ORDER BY id ASC LIMIT 1"
+            )
+            main_guild_id = main_discord.get("guild_id") if main_discord else None
+            team_guild_id = team.get("guild_id") if team else None
+            candidate_asset_guild_ids = [gid for gid in [main_guild_id, team_guild_id] if gid is not None]
+            if candidate_asset_guild_ids:
+                asset_rows = await conn.fetch(
+                    """
+                    SELECT guild_id, asset_type, asset_key, discord_id, asset_name, raw_value
+                    FROM SERVER_ASSETS
+                    WHERE guild_id = ANY($1::bigint[])
+                    ORDER BY
+                        CASE WHEN asset_type = 'emoji' THEN 0 ELSE 1 END,
+                        asset_key ASC
+                    """,
+                    candidate_asset_guild_ids,
+                )
+                for asset in _records_to_dicts(asset_rows):
+                    if str(asset.get("asset_type") or "").lower() == "emoji":
+                        emoji_assets.append(asset)
+                    elif str(asset.get("asset_type") or "").lower() == "role":
+                        role_assets.append(asset)
+        except Exception:
+            role_assets = []
+            emoji_assets = []
+
     player_payload = _record_to_dict(player)
     player_payload["avatar_url"] = _discord_avatar_url(player_payload.get("discord_id"))
     player_payload["avatar_fallback_url"] = _default_discord_avatar(player_payload.get("discord_id"))
@@ -891,10 +1017,45 @@ async def player_detail(steam_id: str) -> dict[str, Any]:
     if steam_avatar_url:
         player_payload["steam_avatar_url"] = steam_avatar_url
         player_payload["display_avatar_url"] = steam_avatar_url
+
+    role_asset = _pick_position_asset(role_assets, player_payload.get("position"))
+    emoji_asset = _pick_position_asset(emoji_assets, player_payload.get("position"))
+    player_payload["role_badge"] = {
+        "position": str(player_payload.get("position") or "").upper() or "N/A",
+        "role_name": role_asset.get("asset_name") if role_asset else None,
+        "role_key": role_asset.get("asset_key") if role_asset else None,
+        "role_raw_value": role_asset.get("raw_value") if role_asset else None,
+        "emoji_raw_value": emoji_asset.get("raw_value") if emoji_asset else None,
+        "emoji_url": _asset_emoji_url(emoji_asset),
+        "asset_guild_id": role_asset.get("guild_id") if role_asset else (emoji_asset.get("guild_id") if emoji_asset else None),
+    }
+
+    outcome_payload = _record_to_dict(outcome)
+    matches_played = int(outcome_payload.get("matches_played") or 0)
+    wins = int(outcome_payload.get("wins") or 0)
+    draws = int(outcome_payload.get("draws") or 0)
+    losses = int(outcome_payload.get("losses") or 0)
+    recent_payload = _records_to_dicts(recent)
+    recent_form = [str(item.get("result") or "").upper() for item in recent_payload if str(item.get("result") or "").upper() in {"W", "D", "L"}][:5]
+    win_rate = round((wins / matches_played) * 100, 1) if matches_played > 0 else 0.0
+    total_goals = int(_record_to_dict(totals).get("goals") or 0)
+    total_assists = int(_record_to_dict(totals).get("assists") or 0)
+    player_summary = {
+        "matches_played": matches_played,
+        "wins": wins,
+        "draws": draws,
+        "losses": losses,
+        "win_rate": win_rate,
+        "form_last5": recent_form,
+        "avg_goals_per_match": round((total_goals / matches_played), 2) if matches_played > 0 else 0.0,
+        "avg_assists_per_match": round((total_assists / matches_played), 2) if matches_played > 0 else 0.0,
+    }
+
     return {
         "player": player_payload,
         "totals": _record_to_dict(totals),
-        "recent_matches": _records_to_dicts(recent),
+        "recent_matches": recent_payload,
+        "summary": player_summary,
         "team": _record_to_dict(team),
     }
 
@@ -1359,6 +1520,9 @@ async def team_detail(guild_id: str) -> dict[str, Any]:
             SELECT
                 m.id,
                 m.datetime,
+                m.game_type,
+                m.extratime,
+                m.penalties,
                 m.home_guild_id,
                 m.away_guild_id,
                 COALESCE(ht.guild_name, m.home_team_name) AS home_team_name,
@@ -1366,13 +1530,36 @@ async def team_detail(guild_id: str) -> dict[str, Any]:
                 COALESCE(ht.guild_icon, '') AS home_team_icon,
                 COALESCE(at.guild_icon, '') AS away_team_icon,
                 m.home_score,
-                m.away_score
+                m.away_score,
+                tm.tournament_id,
+                t.name AS tournament_name
             FROM MATCH_STATS m
             LEFT JOIN IOSCA_TEAMS ht ON ht.guild_id = m.home_guild_id
             LEFT JOIN IOSCA_TEAMS at ON at.guild_id = m.away_guild_id
+            LEFT JOIN TOURNAMENT_MATCHES tm ON tm.match_stats_id = m.id
+            LEFT JOIN TOURNAMENTS t ON t.id = tm.tournament_id
             WHERE m.home_guild_id::text = $1 OR m.away_guild_id::text = $1
             ORDER BY m.datetime DESC
             LIMIT 20
+            """,
+            guild_id,
+        )
+
+        clean_sheet_row = await conn.fetchrow(
+            """
+            SELECT
+                COALESCE(
+                    SUM(
+                        CASE
+                            WHEN m.home_guild_id::text = $1 AND COALESCE(m.away_score, 0) = 0 THEN 1
+                            WHEN m.away_guild_id::text = $1 AND COALESCE(m.home_score, 0) = 0 THEN 1
+                            ELSE 0
+                        END
+                    ),
+                    0
+                ) AS clean_sheets
+            FROM MATCH_STATS m
+            WHERE m.home_guild_id::text = $1 OR m.away_guild_id::text = $1
             """,
             guild_id,
         )
@@ -1407,12 +1594,43 @@ async def team_detail(guild_id: str) -> dict[str, Any]:
 
     stats_payload = _record_to_dict(team_stats)
     stats_payload["goal_diff"] = int(stats_payload.get("goals_for", 0) or 0) - int(stats_payload.get("goals_against", 0) or 0)
+    stats_payload["clean_sheets"] = int(_record_to_dict(clean_sheet_row).get("clean_sheets") or 0)
+
+    recent_payload = _records_to_dicts(recent_matches)
+    form_last5: list[str] = []
+    for match in recent_payload:
+        home_score = int(match.get("home_score") or 0)
+        away_score = int(match.get("away_score") or 0)
+        home_id = str(match.get("home_guild_id") or "").strip()
+        away_id = str(match.get("away_guild_id") or "").strip()
+        result = "-"
+        if home_score == away_score:
+            result = "D"
+        elif home_id == guild_id:
+            result = "W" if home_score > away_score else "L"
+        elif away_id == guild_id:
+            result = "W" if away_score > home_score else "L"
+        match["result"] = result
+        if result in {"W", "D", "L"} and len(form_last5) < 5:
+            form_last5.append(result)
+
+    matches_played = int(stats_payload.get("matches_played") or 0)
+    wins = int(stats_payload.get("wins") or 0)
+    goals_for = int(stats_payload.get("goals_for") or 0)
+    goals_against = int(stats_payload.get("goals_against") or 0)
+    team_summary = {
+        "form_last5": form_last5,
+        "win_rate": round((wins / matches_played) * 100, 1) if matches_played > 0 else 0.0,
+        "avg_goals_for": round((goals_for / matches_played), 2) if matches_played > 0 else 0.0,
+        "avg_goals_against": round((goals_against / matches_played), 2) if matches_played > 0 else 0.0,
+    }
 
     return {
         "team": team_payload,
         "players": parsed_players,
         "stats": stats_payload,
-        "recent_matches": _records_to_dicts(recent_matches),
+        "summary": team_summary,
+        "recent_matches": recent_payload,
     }
 
 

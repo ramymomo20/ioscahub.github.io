@@ -15,7 +15,9 @@
     const p = data.player || {};
     const totals = data.totals || {};
     const recent = data.recent_matches || [];
+    const summary = data.summary || {};
     const team = data.team || {};
+    const roleBadge = p.role_badge || {};
     const fallbackAvatar = 'https://cdn.discordapp.com/embed/avatars/0.png';
     const teamLogoFallback = 'assets/icons/iosca-icon.png';
 
@@ -76,6 +78,29 @@
       if (value === 'D') return '<span class="badge" style="background:#3d3111;border-color:#8a6c1f;color:#f0df9a;">D</span>';
       if (value === 'L') return '<span class="badge" style="background:#3d1111;border-color:#8a1f1f;color:#f0a39a;">L</span>';
       return '<span class="badge">-</span>';
+    }
+
+    function formIcon(result) {
+      const value = String(result || '').toUpperCase();
+      if (value === 'W') return '<img class="form-icon" src="assets/icons/form-w.svg" alt="W">';
+      if (value === 'D') return '<img class="form-icon" src="assets/icons/form-d.svg" alt="D">';
+      if (value === 'L') return '<img class="form-icon" src="assets/icons/form-l.svg" alt="L">';
+      return '<span class="badge">-</span>';
+    }
+
+    function formStrip(values) {
+      const rows = Array.isArray(values) ? values : [];
+      if (!rows.length) return '<span class="meta">No form data</span>';
+      return `<span class="form-strip">${rows.map(formIcon).join('')}</span>`;
+    }
+
+    function roleEmojiHtml(badge) {
+      if (badge && badge.emoji_url) {
+        return `<img class="player-role-emoji" src="${esc(badge.emoji_url)}" alt="role emoji">`;
+      }
+      const raw = String((badge && badge.emoji_raw_value) || '').trim();
+      if (raw) return `<span class="player-role-emoji-text">${esc(raw)}</span>`;
+      return '';
     }
 
     function competitionLabel(match) {
@@ -151,6 +176,41 @@
                 `
                   : `<div class="player-team-chip empty"><span>Current team: N/A</span></div>`
               }
+              ${
+                (roleBadge && (roleBadge.role_name || roleBadge.role_key || roleBadge.emoji_raw_value || roleBadge.emoji_url))
+                  ? `
+                  <div class="player-role-asset-chip">
+                    ${roleEmojiHtml(roleBadge)}
+                    <span>
+                      <strong>Role:</strong>
+                      ${esc(roleBadge.role_name || roleBadge.role_key || 'N/A')}
+                    </span>
+                  </div>
+                `
+                  : ''
+              }
+              <div class="player-quick-summary">
+                <div class="quick-box">
+                  <div class="k">W/D/L</div>
+                  <div class="v">${esc(summary.wins || 0)}/${esc(summary.draws || 0)}/${esc(summary.losses || 0)}</div>
+                </div>
+                <div class="quick-box">
+                  <div class="k">Win Rate</div>
+                  <div class="v">${esc(Number(summary.win_rate || 0).toFixed(1))}%</div>
+                </div>
+                <div class="quick-box">
+                  <div class="k">Avg Goals</div>
+                  <div class="v">${esc(Number(summary.avg_goals_per_match || 0).toFixed(2))}</div>
+                </div>
+                <div class="quick-box">
+                  <div class="k">Avg Assists</div>
+                  <div class="v">${esc(Number(summary.avg_assists_per_match || 0).toFixed(2))}</div>
+                </div>
+                <div class="quick-form">
+                  <div class="k">Last 5</div>
+                  ${formStrip(summary.form_last5 || [])}
+                </div>
+              </div>
             </div>
           </div>
           <div class="footer-note">Registered: ${fmtDateTime(p.registered_at)} | Last active: ${fmtDateTime(p.last_active)}</div>

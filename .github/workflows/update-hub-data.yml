@@ -23,9 +23,20 @@ jobs:
       - name: Install dependencies
         run: pip install -r tools/requirements.txt
 
+      - name: Validate DB secrets
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          SUPABASE_POOLER_URL: ${{ secrets.SUPABASE_POOLER_URL }}
+        run: |
+          if [ -z "${SUPABASE_DB_URL}" ] && [ -z "${SUPABASE_POOLER_URL}" ]; then
+            echo "::error::Missing DB secret. Set SUPABASE_DB_URL or SUPABASE_POOLER_URL in repo secrets."
+            exit 2
+          fi
+
       - name: Export data
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          SUPABASE_POOLER_URL: ${{ secrets.SUPABASE_POOLER_URL }}
         run: python tools/export_hub_data.py
 
       - name: Commit data if changed
