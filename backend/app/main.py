@@ -1508,6 +1508,214 @@ async def tournament_detail(tournament_id: int) -> dict[str, Any]:
             tournament_id,
         )
 
+        def _is_steam_like(value: Any) -> bool:
+            raw = str(value or "").strip()
+            if not raw:
+                return False
+            upper = raw.upper()
+            if upper.startswith("STEAM_"):
+                return True
+            if raw.startswith("[") and raw.endswith("]") and upper.startswith("[U:"):
+                return True
+            return raw.isdigit() and len(raw) >= 16
+
+        def _leader_display_name(row: dict[str, Any]) -> str:
+            for candidate in [row.get("discord_name"), row.get("player_name")]:
+                text = str(candidate or "").strip()
+                if text and not _is_steam_like(text):
+                    return text
+            steam_id = str(row.get("steam_id") or "").strip()
+            return steam_id or "Unknown Player"
+
+        async def _fetch_leader_metric(
+            total_expr: str,
+            *,
+            fallback_expr: str | None = None,
+            extra_where: str = "",
+        ) -> list[dict[str, Any]]:
+            rows = await conn.fetch(
+                f"""
+                SELECT
+                    pmd.steam_id,
+                    MAX(ip.discord_id)::text AS discord_id,
+                    MAX(NULLIF(ip.discord_name, '')) AS discord_name,
+                    MAX(COALESCE(NULLIF(ip.discord_name, ''), pmd.steam_id)) AS player_name,
+                    SUM({total_expr}) AS total
+                FROM TOURNAMENT_MATCHES tm
+                JOIN MATCH_STATS m ON m.id = tm.match_stats_id
+                JOIN PLAYER_MATCH_DATA pmd
+                  ON (
+                       pmd.match_id::text = m.match_id::text
+                       OR (CASE WHEN pmd.match_id::text ~ '^[0-9]+$' THEN pmd.match_id::bigint END) = m.id::bigint
+                  )
+                LEFT JOIN IOSCA_PLAYERS ip ON ip.steam_id = pmd.steam_id
+                WHERE tm.tournament_id = $1
+                {extra_where}
+                GROUP BY pmd.steam_id
+                ORDER BY total DESC, player_name ASC
+                LIMIT 30
+                """,
+                tournament_id,
+            )
+            payload = _records_to_dicts(rows)
+            payload = [row for row in payload if _safe_int(row.get("total")) > 0]
+
+            if not payload and fallback_expr:
+                fallback_rows = await conn.fetch(
+                    f"""
+                    SELECT
+                        steam_id,
+                        MAX(discord_id)::text AS discord_id,
+                        NULL::text AS discord_name,
+                        MAX(COALESCE(NULLIF(player_name, ''), steam_id)) AS player_name,
+                        SUM({fallback_expr}) AS total
+                    FROM TOURNAMENT_PLAYER_STATS
+                    WHERE tournament_id = $1
+                    GROUP BY steam_id
+                    ORDER BY total DESC, player_name ASC
+                    LIMIT 30
+                    """,
+                    tournament_id,
+                )
+                payload = _records_to_dicts(fallback_rows)
+                payload = [row for row in payload if _safe_int(row.get("total")) > 0]
+
+            for row in payload:
+                row["display_name"] = _leader_display_name(row)
+            return payload[:10]
+
+        leader_goals = await _fetch_leader_metric(
+            "COALESCE(pmd.goals, 0)",
+            fallback_expr="COALESCE(goals, 0)",
+        )
+        leader_assists = await _fetch_leader_metric(
+            "COALESCE(pmd.assists, 0) + COALESCE(pmd.second_assists, 0)",
+            fallback_expr="COALESCE(assists, 0) + COALESCE(second_assists, 0)",
+        )
+        leader_passes = await _fetch_leader_metric(
+            "COALESCE(pmd.passes_completed, 0)",
+        )
+        leader_defenders = await _fetch_leader_metric(
+            "COALESCE(pmd.tackles, 0) + COALESCE(pmd.interceptions, 0)",
+            fallback_expr="COALESCE(tackles, 0) + COALESCE(interceptions, 0)",
+        )
+        leader_goalkeepers = await _fetch_leader_metric(
+            "COALESCE(pmd.keeper_saves, 0) + COALESCE(pmd.keeper_saves_caught, 0)",
+            extra_where="AND UPPER(COALESCE(pmd.position, '')) = 'GK'",
+        )
+
+        mvp_leaders: list[dict[str, Any]] = []
+        if shared_get_mvp_data:
+            match_rows = await conn.fetch(
+                """
+                SELECT
+                    tm.match_stats_id,
+                    pmd.steam_id,
+                    pmd.guild_id,
+                    COALESCE(NULLIF(ip.discord_name, ''), pmd.steam_id) AS player_name,
+                    ip.discord_name,
+                    ip.discord_id::text AS discord_id,
+                    pmd.position,
+                    pmd.goals,
+                    pmd.assists,
+                    pmd.second_assists,
+                    pmd.shots,
+                    pmd.shots_on_goal,
+                    pmd.passes_completed,
+                    pmd.passes_attempted,
+                    pmd.chances_created,
+                    pmd.key_passes,
+                    pmd.interceptions,
+                    pmd.tackles,
+                    pmd.sliding_tackles_completed,
+                    pmd.fouls,
+                    pmd.fouls_suffered,
+                    pmd.yellow_cards,
+                    pmd.red_cards,
+                    pmd.keeper_saves,
+                    pmd.keeper_saves_caught,
+                    pmd.goals_conceded,
+                    pmd.offsides,
+                    pmd.own_goals,
+                    pmd.event_timestamps
+                FROM TOURNAMENT_MATCHES tm
+                JOIN MATCH_STATS m ON m.id = tm.match_stats_id
+                JOIN PLAYER_MATCH_DATA pmd
+                  ON (
+                       pmd.match_id::text = m.match_id::text
+                       OR (CASE WHEN pmd.match_id::text ~ '^[0-9]+$' THEN pmd.match_id::bigint END) = m.id::bigint
+                  )
+                LEFT JOIN IOSCA_PLAYERS ip ON ip.steam_id = pmd.steam_id
+                WHERE tm.tournament_id = $1
+                ORDER BY tm.match_stats_id ASC, pmd.id DESC
+                """,
+                tournament_id,
+            )
+            grouped_match_rows: dict[str, list[dict[str, Any]]] = defaultdict(list)
+            for item in _records_to_dicts(match_rows):
+                grouped_match_rows[str(item.get("match_stats_id"))].append(item)
+
+            mvp_counts: dict[str, dict[str, Any]] = {}
+            for rows_for_match in grouped_match_rows.values():
+                merged_rows = _merge_match_player_rows(rows_for_match)
+                _attach_match_ratings(merged_rows)
+                try:
+                    mvp_payload = shared_get_mvp_data(merged_rows)
+                except Exception:
+                    mvp_payload = None
+                if not mvp_payload:
+                    continue
+
+                mvp_name_key = _norm_text_key(mvp_payload.get("name"))
+                mvp_pos = str(mvp_payload.get("position") or "").strip().upper()
+                if not mvp_name_key:
+                    continue
+
+                linked = None
+                for row in merged_rows:
+                    row_name_key = _norm_text_key(row.get("player_name") or row.get("discord_name") or row.get("steam_id"))
+                    row_pos = str(row.get("position") or "").strip().upper()
+                    if row_name_key != mvp_name_key:
+                        continue
+                    if mvp_pos and row_pos and row_pos != mvp_pos:
+                        continue
+                    linked = row
+                    break
+                if not linked:
+                    continue
+
+                steam_id = str(linked.get("steam_id") or "").strip()
+                key = steam_id if steam_id else f"name:{mvp_name_key}"
+                if key not in mvp_counts:
+                    mvp_counts[key] = {
+                        "steam_id": steam_id,
+                        "discord_id": linked.get("discord_id"),
+                        "discord_name": linked.get("discord_name"),
+                        "player_name": linked.get("player_name"),
+                        "total": 0,
+                    }
+                mvp_counts[key]["total"] = _safe_int(mvp_counts[key].get("total")) + 1
+
+            mvp_leaders = list(mvp_counts.values())
+            mvp_leaders.sort(
+                key=lambda row: (
+                    -_safe_int(row.get("total")),
+                    str(_leader_display_name(row)).lower(),
+                )
+            )
+            for row in mvp_leaders:
+                row["display_name"] = _leader_display_name(row)
+            mvp_leaders = mvp_leaders[:10]
+
+        leaders_payload = {
+            "goals": leader_goals,
+            "assists": leader_assists,
+            "passes": leader_passes,
+            "defenders": leader_defenders,
+            "goalkeepers": leader_goalkeepers,
+            "mvps": mvp_leaders,
+        }
+
     team_forms: dict[str, list[str]] = defaultdict(list)
     played_fixtures: list[Any] = []
     for fixture in fixtures:
@@ -1555,6 +1763,7 @@ async def tournament_detail(tournament_id: int) -> dict[str, Any]:
         "fixtures": _records_to_dicts(fixtures),
         "teams": _records_to_dicts(teams),
         "team_forms": trimmed_team_forms,
+        "leaders": leaders_payload,
     }
 
 

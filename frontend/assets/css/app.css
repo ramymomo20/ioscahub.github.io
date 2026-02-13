@@ -271,6 +271,61 @@ a:hover {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
+.leader-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.leader-card {
+  border: 1px solid var(--line-soft);
+  border-radius: 12px;
+  padding: 11px;
+  background: linear-gradient(180deg, rgba(22, 41, 73, 0.9), rgba(11, 25, 49, 0.95));
+}
+
+.leader-card h3 {
+  margin: 0 0 10px;
+  font-size: 1rem;
+}
+
+.leader-row {
+  display: grid;
+  grid-template-columns: 34px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 0;
+  border-top: 1px solid rgba(137, 181, 255, 0.14);
+}
+
+.leader-row:first-of-type {
+  border-top: 0;
+}
+
+.leader-rank {
+  color: #b9d7ff;
+  font-weight: 700;
+}
+
+.leader-player {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.leader-total {
+  color: #d4ebff;
+  font-weight: 700;
+  font-size: 1.02rem;
+}
+
+.leader-total small {
+  color: #9dc6f6;
+  font-size: 0.73rem;
+  font-weight: 600;
+}
+
 .stat {
   border: 1px solid var(--line-soft);
   border-radius: 10px;
@@ -1634,6 +1689,10 @@ tbody tr:hover {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
+  .leader-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .grid.cols-4 {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -1681,6 +1740,10 @@ tbody tr:hover {
 @media (max-width: 760px) {
   .home-stats-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .leader-grid {
+    grid-template-columns: 1fr;
   }
 
   .grid.cols-3,
