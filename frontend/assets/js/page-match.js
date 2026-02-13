@@ -168,9 +168,27 @@
     return entries;
   }
 
-  function detectFormation(entries) {
+  function normalizeLineupPos(value) {
+    const pos = String(value || "").toUpperCase().trim();
+    // Canonical lineup positions are already stored in DB; keep raw uppercase.
+    return pos;
+  }
+
+  function formationFromGameType(gameType) {
+    const raw = String(gameType || "").toLowerCase();
+    if (!raw) return null;
+    if (raw.includes("8v8")) return "eight";
+    if (raw.includes("6v6")) return "six";
+    if (raw.includes("5v5")) return "five";
+    return null;
+  }
+
+  function detectFormation(entries, gameType) {
+    const byType = formationFromGameType(gameType);
+    if (byType) return byType;
+
     const started = entries.filter((entry) => entry.started !== false);
-    const positions = new Set(started.map((entry) => entry.pos));
+    const positions = new Set(started.map((entry) => normalizeLineupPos(entry.pos)));
 
     if (positions.has("CF") && positions.has("LM") && positions.has("RM") && positions.has("CB") && positions.has("GK")) return "five";
     if (positions.has("LW") && positions.has("RW") && positions.has("CM") && positions.has("LB") && positions.has("RB") && positions.has("GK") && !positions.has("CF")) return "six";
@@ -348,21 +366,37 @@
     return `<div class="pitch-player-stats">${chips.join("")}</div>`;
   }
 
-  function lineupCardHtml(teamName, teamIcon, entries, lookup) {
-    const formationKey = detectFormation(entries);
+  function lineupCardHtml(teamName, teamIcon, entries, lookup, gameType) {
+    const formationKey = detectFormation(entries, gameType);
     const slots = FORMATIONS[formationKey] || FORMATIONS.eight;
-    const started = entries.filter((entry) => entry.started !== false);
+    const started = entries
+      .filter((entry) => entry.started !== false)
+      .map((entry) => ({ ...entry, pos: normalizeLineupPos(entry.pos) }));
     const usedIndex = new Set();
+    const slotPlayers = new Array(slots.length).fill(null);
 
-    const nodes = slots.map((slot) => {
-      const matchIndex = started.findIndex((entry, idx) => !usedIndex.has(idx) && entry.pos === slot.pos);
-      let entry = null;
-
+    // Pass 1: strict position mapping.
+    for (let i = 0; i < slots.length; i++) {
+      const expectedPos = normalizeLineupPos(slots[i].pos);
+      const matchIndex = started.findIndex((entry, idx) => !usedIndex.has(idx) && entry.pos === expectedPos);
       if (matchIndex >= 0) {
         usedIndex.add(matchIndex);
-        entry = started[matchIndex];
+        slotPlayers[i] = started[matchIndex];
       }
+    }
 
+    // Pass 2: if data has duplicates/missing positions, fill remaining slots with leftover starters.
+    for (let i = 0; i < slots.length; i++) {
+      if (slotPlayers[i]) continue;
+      const fallbackIndex = started.findIndex((entry, idx) => !usedIndex.has(idx));
+      if (fallbackIndex >= 0) {
+        usedIndex.add(fallbackIndex);
+        slotPlayers[i] = started[fallbackIndex];
+      }
+    }
+
+    const nodes = slots.map((slot, slotIdx) => {
+      const entry = slotPlayers[slotIdx];
       if (!entry) {
         return `
           <div class="pitch-player empty" style="left:${slot.x}%;top:${slot.y}%;">
@@ -377,12 +411,26 @@
       return `
         <div class="pitch-player" style="left:${slot.x}%;top:${slot.y}%;">
           ${Number.isFinite(rating) ? `<div class="pitch-rating-chip">${esc(rating.toFixed(1))}</div>` : ""}
-          <div class="pitch-jersey">${esc(slot.pos)}</div>
+          <div class="pitch-jersey">${esc(entry.pos || slot.pos)}</div>
           <div class="pitch-player-name">${esc(truncateName(entry.name, 16))}</div>
           ${playerStatChips(stats)}
         </div>
       `;
     }).join("");
+
+    const overflowStarters = started.filter((_, idx) => !usedIndex.has(idx));
+    const overflowHtml = overflowStarters.length
+      ? `
+        <div class="pitch-overflow">
+          <span class="pitch-overflow-label">Extra starters:</span>
+          ${overflowStarters.map((entry) => `
+            <span class="pitch-overflow-chip">
+              ${esc(entry.pos || "N/A")} - ${esc(truncateName(entry.name, 20))}
+            </span>
+          `).join("")}
+        </div>
+      `
+      : "";
 
     const fallbackIcon = /iosca/i.test(String(teamName || "")) ? "assets/icons/iosca-icon.png" : "";
     const headerIcon = String(teamIcon || "").trim() || fallbackIcon;
@@ -402,6 +450,7 @@
           <div class="pitch-goal-box bottom"></div>
           ${nodes}
         </div>
+        ${overflowHtml}
       </article>
     `;
   }
@@ -580,8 +629,8 @@
         ${mvpWidgetHtml(mvp)}
 
         <section class="lineup-pitches">
-          ${lineupCardHtml(match.home_team_name || "Home", match.home_team_icon, homeLineup, homeLookup)}
-          ${lineupCardHtml(match.away_team_name || "Away", match.away_team_icon, awayLineup, awayLookup)}
+          ${lineupCardHtml(match.home_team_name || "Home", match.home_team_icon, homeLineup, homeLookup, match.game_type)}
+          ${lineupCardHtml(match.away_team_name || "Away", match.away_team_icon, awayLineup, awayLookup, match.game_type)}
         </section>
       `;
     } catch (err) {

@@ -869,6 +869,35 @@ tbody tr:hover {
   background: linear-gradient(180deg, rgba(15, 26, 47, 0.96), rgba(10, 19, 36, 0.96));
 }
 
+.pitch-overflow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 10px 10px;
+  border-top: 1px solid rgba(144, 187, 247, 0.16);
+  background: linear-gradient(180deg, rgba(11, 22, 42, 0.96), rgba(9, 18, 34, 0.98));
+}
+
+.pitch-overflow-label {
+  color: #adcaf0;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.pitch-overflow-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(125, 179, 250, 0.33);
+  background: rgba(15, 32, 62, 0.8);
+  color: #e5f2ff;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
 .pitch-header {
   display: flex;
   align-items: center;
