@@ -84,8 +84,8 @@
         ${leaderCard("Most MVPs", leaders.mvps, "MVP")}
       </div>
 
-      <div class="grid cols-2" style="margin-top:10px;">
-        <div class="card" style="margin:0;">
+      <div class="grid tournament-detail-grid" style="margin-top:10px;">
+        <div class="card tournament-standings-card" style="margin:0;">
           <h3>Standings</h3>
           <div class="table-wrap">
             <table>
@@ -116,7 +116,7 @@
           </div>
         </div>
 
-        <div class="card" style="margin:0;">
+        <div class="card tournament-teams-card" style="margin:0;">
           <h3>Teams in tournament</h3>
           <div class="list">
             ${teams.length ? teams.map((team) => `
