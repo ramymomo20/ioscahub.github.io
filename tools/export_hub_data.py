@@ -156,25 +156,103 @@ async def _fetch_tournaments(conn: asyncpg.Connection) -> list[dict]:
 
         standings = await conn.fetch(
             """
+            WITH teams AS (
+                SELECT
+                    tt.guild_id,
+                    COALESCE(tt.team_name_snapshot, it.guild_name, CONCAT('Team ', tt.guild_id::text)) AS team_name,
+                    COALESCE(tt.team_icon_snapshot, it.guild_icon, '') AS team_icon
+                FROM TOURNAMENT_TEAMS tt
+                LEFT JOIN IOSCA_TEAMS it ON it.guild_id = tt.guild_id
+                WHERE tt.tournament_id = $1
+            ),
+            played_matches AS (
+                SELECT
+                    f.home_guild_id AS home_id,
+                    f.away_guild_id AS away_id,
+                    COALESCE(m.home_score, 0)::int AS home_score,
+                    COALESCE(m.away_score, 0)::int AS away_score
+                FROM TOURNAMENT_FIXTURES f
+                JOIN MATCH_STATS m ON m.id = f.played_match_stats_id
+                WHERE f.tournament_id = $1
+                  AND COALESCE(f.is_played, FALSE) = TRUE
+                  AND f.home_guild_id IS NOT NULL
+                  AND f.away_guild_id IS NOT NULL
+            ),
+            forfeits AS (
+                SELECT
+                    tf.winner_guild_id AS home_id,
+                    tf.forfeiting_guild_id AS away_id,
+                    COALESCE(tf.score_forfeit, 10)::int AS home_score,
+                    0::int AS away_score
+                FROM TOURNAMENT_FORFEITS tf
+                WHERE tf.tournament_id = $1
+            ),
+            all_matches AS (
+                SELECT * FROM played_matches
+                UNION ALL
+                SELECT * FROM forfeits
+            ),
+            team_rows AS (
+                SELECT
+                    home_id AS guild_id,
+                    1 AS matches_played,
+                    CASE WHEN home_score > away_score THEN 1 ELSE 0 END AS wins,
+                    CASE WHEN home_score = away_score THEN 1 ELSE 0 END AS draws,
+                    CASE WHEN home_score < away_score THEN 1 ELSE 0 END AS losses,
+                    home_score AS goals_for,
+                    away_score AS goals_against
+                FROM all_matches
+                UNION ALL
+                SELECT
+                    away_id AS guild_id,
+                    1 AS matches_played,
+                    CASE WHEN away_score > home_score THEN 1 ELSE 0 END AS wins,
+                    CASE WHEN away_score = home_score THEN 1 ELSE 0 END AS draws,
+                    CASE WHEN away_score < home_score THEN 1 ELSE 0 END AS losses,
+                    away_score AS goals_for,
+                    home_score AS goals_against
+                FROM all_matches
+            ),
+            agg AS (
+                SELECT
+                    guild_id,
+                    SUM(matches_played)::int AS matches_played,
+                    SUM(wins)::int AS wins,
+                    SUM(draws)::int AS draws,
+                    SUM(losses)::int AS losses,
+                    SUM(goals_for)::int AS goals_for,
+                    SUM(goals_against)::int AS goals_against
+                FROM team_rows
+                GROUP BY guild_id
+            ),
+            points_cfg AS (
+                SELECT
+                    COALESCE(t.points_win, 3)::int AS points_win,
+                    COALESCE(t.points_draw, 1)::int AS points_draw,
+                    COALESCE(t.points_loss, 0)::int AS points_loss
+                FROM TOURNAMENTS t
+                WHERE t.id = $1
+            )
             SELECT
-                s.guild_id,
-                COALESCE(tt.team_name_snapshot, it.guild_name, CONCAT('Team ', s.guild_id::text)) AS team_name,
-                COALESCE(tt.team_icon_snapshot, it.guild_icon, '') AS team_icon,
-                s.matches_played,
-                s.wins,
-                s.draws,
-                s.losses,
-                s.goals_for,
-                s.goals_against,
-                s.goal_diff,
-                s.points
-            FROM TOURNAMENT_STANDINGS s
-            LEFT JOIN TOURNAMENT_TEAMS tt
-                ON tt.tournament_id = s.tournament_id
-               AND tt.guild_id = s.guild_id
-            LEFT JOIN IOSCA_TEAMS it ON it.guild_id = s.guild_id
-            WHERE s.tournament_id = $1
-            ORDER BY s.points DESC, s.goal_diff DESC, s.goals_for DESC, team_name ASC
+                t.guild_id,
+                t.team_name,
+                t.team_icon,
+                COALESCE(a.matches_played, 0) AS matches_played,
+                COALESCE(a.wins, 0) AS wins,
+                COALESCE(a.draws, 0) AS draws,
+                COALESCE(a.losses, 0) AS losses,
+                COALESCE(a.goals_for, 0) AS goals_for,
+                COALESCE(a.goals_against, 0) AS goals_against,
+                (COALESCE(a.goals_for, 0) - COALESCE(a.goals_against, 0)) AS goal_diff,
+                (
+                    COALESCE(a.wins, 0) * pc.points_win +
+                    COALESCE(a.draws, 0) * pc.points_draw +
+                    COALESCE(a.losses, 0) * pc.points_loss
+                ) AS points
+            FROM teams t
+            CROSS JOIN points_cfg pc
+            LEFT JOIN agg a ON a.guild_id = t.guild_id
+            ORDER BY points DESC, goal_diff DESC, goals_for DESC, team_name ASC
             """,
             tournament_id,
         )
