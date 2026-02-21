@@ -179,6 +179,20 @@ def _merge_match_player_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]
         for field in numeric_fields:
             current[field] = _safe_int(current.get(field)) + _safe_int(row.get(field))
 
+        # Keep the best persisted rating and MVP metadata when duplicates collapse.
+        cur_rating = current.get("match_rating")
+        row_rating = row.get("match_rating")
+        if isinstance(row_rating, (int, float)) and (
+            not isinstance(cur_rating, (int, float)) or float(row_rating) > float(cur_rating)
+        ):
+            current["match_rating"] = float(row_rating)
+        if bool(row.get("is_match_mvp")):
+            current["is_match_mvp"] = True
+            if row.get("mvp_score") is not None:
+                current["mvp_score"] = row.get("mvp_score")
+            if row.get("mvp_key_stats") is not None:
+                current["mvp_key_stats"] = row.get("mvp_key_stats")
+
         if not current.get("player_name") and row.get("player_name"):
             current["player_name"] = row.get("player_name")
         if not current.get("position") and row.get("position"):
@@ -196,6 +210,10 @@ def _attach_match_ratings(players: list[dict[str, Any]]) -> None:
     if not shared_rate_player:
         return
     for player in players:
+        persisted = player.get("match_rating")
+        if isinstance(persisted, (int, float)):
+            player["match_rating"] = round(float(persisted), 2)
+            continue
         try:
             rating = shared_rate_player(player)
         except Exception:
@@ -1529,7 +1547,19 @@ async def match_detail(match_id: str) -> dict[str, Any]:
     _attach_match_ratings(all_player_stats)
 
     mvp_payload: dict[str, Any] | None = None
-    if shared_get_mvp_data:
+    persisted_mvp = [p for p in all_player_stats if p.get("is_match_mvp")]
+    if persisted_mvp:
+        best = max(
+            persisted_mvp,
+            key=lambda p: float(p.get("mvp_score") if p.get("mvp_score") is not None else (p.get("match_rating") or 0)),
+        )
+        mvp_payload = {
+            "name": best.get("player_name") or "Unknown",
+            "position": str(best.get("position") or "").upper(),
+            "score": float(best.get("mvp_score") if best.get("mvp_score") is not None else (best.get("match_rating") or 0)),
+            "stats": list(best.get("mvp_key_stats") or []),
+        }
+    elif shared_get_mvp_data:
         try:
             mvp_payload = shared_get_mvp_data(all_player_stats)
         except Exception:
