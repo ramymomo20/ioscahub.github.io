@@ -165,18 +165,35 @@ async def _fetch_tournaments(conn: asyncpg.Connection) -> list[dict]:
                 LEFT JOIN IOSCA_TEAMS it ON it.guild_id = tt.guild_id
                 WHERE tt.tournament_id = $1
             ),
+            forfeited_fixtures AS (
+                SELECT fixture_id
+                FROM TOURNAMENT_FORFEITS
+                WHERE tournament_id = $1
+                  AND fixture_id IS NOT NULL
+            ),
             played_matches AS (
                 SELECT
                     f.home_guild_id AS home_id,
                     f.away_guild_id AS away_id,
-                    COALESCE(m.home_score, 0)::int AS home_score,
-                    COALESCE(m.away_score, 0)::int AS away_score
+                    CASE
+                        WHEN m.home_guild_id = f.home_guild_id AND m.away_guild_id = f.away_guild_id THEN COALESCE(m.home_score, 0)::int
+                        WHEN m.home_guild_id = f.away_guild_id AND m.away_guild_id = f.home_guild_id THEN COALESCE(m.away_score, 0)::int
+                        ELSE COALESCE(m.home_score, 0)::int
+                    END AS home_score,
+                    CASE
+                        WHEN m.home_guild_id = f.home_guild_id AND m.away_guild_id = f.away_guild_id THEN COALESCE(m.away_score, 0)::int
+                        WHEN m.home_guild_id = f.away_guild_id AND m.away_guild_id = f.home_guild_id THEN COALESCE(m.home_score, 0)::int
+                        ELSE COALESCE(m.away_score, 0)::int
+                    END AS away_score
                 FROM TOURNAMENT_FIXTURES f
                 JOIN MATCH_STATS m ON m.id = f.played_match_stats_id
                 WHERE f.tournament_id = $1
                   AND COALESCE(f.is_played, FALSE) = TRUE
                   AND f.home_guild_id IS NOT NULL
                   AND f.away_guild_id IS NOT NULL
+                  AND NOT EXISTS (
+                      SELECT 1 FROM forfeited_fixtures ff WHERE ff.fixture_id = f.id
+                  )
             ),
             forfeits AS (
                 SELECT

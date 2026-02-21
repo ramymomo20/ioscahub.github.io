@@ -242,6 +242,22 @@
                 <div class="k">Avg Assists</div>
                 <div class="v">${esc(Number(summary.avg_assists_per_match || 0).toFixed(2))}</div>
               </div>
+              <div class="quick-box">
+                <div class="k">S/Sub/B</div>
+                <div class="v">${esc(Number(summary.started_matches || 0))}/${esc(Number(summary.substitute_matches || 0))}/${esc(Number(summary.bench_matches || 0))}</div>
+              </div>
+              <div class="quick-box">
+                <div class="k">Clutch Actions</div>
+                <div class="v">${esc(Number(summary.clutch_action_events || 0))}</div>
+              </div>
+              <div class="quick-box">
+                <div class="k">Sub Impact (G/OG)</div>
+                <div class="v">${esc(Number(summary.sub_impact_goals || 0))}/${esc(Number(summary.sub_impact_own_goals || 0))}</div>
+              </div>
+              <div class="quick-box">
+                <div class="k">Sub Impact Events</div>
+                <div class="v">${esc(Number(summary.sub_impact_events || 0))}</div>
+              </div>
               <div class="quick-form">
                 <div class="k">Last 5</div>
                 ${formStrip(summary.form_last5 || [])}

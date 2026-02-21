@@ -12,6 +12,7 @@
 
   const STAT_META = {
     goal: { icon: "assets/icons/soccer-ball-icon.png", label: "Goals", chip: "G" },
+    own_goal: { icon: "assets/icons/soccer-ball-icon.png", label: "Own goals", chip: "OG" },
     assist: { icon: "assets/icons/cleats-icon.png", label: "Assists", chip: "A" },
     save: { icon: "assets/icons/glove-icon.png", label: "Saves", chip: "S" },
     tackle: { icon: "assets/icons/cleats-icon.png", label: "Tackles", chip: "TKL" },
@@ -286,6 +287,52 @@
 
     lines.sort((a, b) => (a.sortMinute || 999) - (b.sortMinute || 999) || a.name.localeCompare(b.name));
     return lines.slice(0, 12);
+  }
+
+  function parseJsonValue(value, fallback) {
+    if (value === null || value === undefined) return fallback;
+    if (typeof value === "object") return value;
+    if (typeof value === "string") {
+      try {
+        return JSON.parse(value);
+      } catch (_) {
+        return fallback;
+      }
+    }
+    return fallback;
+  }
+
+  function teamDerivedMetrics(sideStats) {
+    const out = {
+      starts: 0,
+      subs: 0,
+      bench: 0,
+      clutch: 0,
+      subImpactEvents: 0,
+      subGoals: 0,
+      subOwnGoals: 0
+    };
+
+    for (const player of sideStats || []) {
+      const status = String(player.status || "").toLowerCase();
+      if (status === "started") out.starts += 1;
+      else if (status === "substitute") out.subs += 1;
+      else if (status === "on_bench") out.bench += 1;
+
+      const clutch = parseJsonValue(player.clutch_actions ?? player.clutchActions, []);
+      if (Array.isArray(clutch)) out.clutch += clutch.length;
+
+      const subImpact = parseJsonValue(player.sub_impact ?? player.subImpact, {});
+      if (subImpact && typeof subImpact === "object") {
+        if (Array.isArray(subImpact.events)) out.subImpactEvents += subImpact.events.length;
+        if (subImpact.summary && typeof subImpact.summary === "object") {
+          out.subGoals += Number(subImpact.summary.goals || 0) || 0;
+          out.subOwnGoals += Number(subImpact.summary.own_goals || 0) || 0;
+        }
+      }
+
+    }
+    return out;
   }
 
   function attachEventRatings(items, sideStats) {
@@ -580,6 +627,12 @@
       const homeEvents = attachEventRatings(apiHomeEvents.length ? apiHomeEvents : buildEventLines(homeStats), homeStats);
       const awayEvents = attachEventRatings(apiAwayEvents.length ? apiAwayEvents : buildEventLines(awayStats), awayStats);
       const hasEvents = homeEvents.length > 0 || awayEvents.length > 0;
+      const homeDerived = teamDerivedMetrics(homeStats);
+      const awayDerived = teamDerivedMetrics(awayStats);
+      const showDerived = (
+        homeDerived.clutch + awayDerived.clutch + homeDerived.subImpactEvents + awayDerived.subImpactEvents
+      ) > 0;
+      const comebackFlag = Boolean(match.comeback_flag);
 
       const homeLineup = parseLineupEntries(match.home_lineup || []);
       const awayLineup = parseLineupEntries(match.away_lineup || []);
@@ -605,6 +658,7 @@
               <div class="flags">
                 ${match.extratime ? '<span class="badge">ET</span>' : ""}
                 ${match.penalties ? '<span class="badge">PEN</span>' : ""}
+                ${comebackFlag ? '<span class="badge">COMEBACK</span>' : ""}
               </div>
             </div>
 
@@ -619,6 +673,25 @@
             <div class="match-events-grid">
               <div class="match-events">${homeEvents.map(eventLineHtml).join("")}</div>
               <div class="match-events">${awayEvents.map(eventLineHtml).join("")}</div>
+            </div>
+          </div>
+          ` : ""}
+
+          ${showDerived ? `
+          <div class="match-events-wrap">
+            <div class="match-events-grid">
+              <div class="match-events">
+                <div class="match-event-line"><span><strong>${esc(match.home_team_name || "Home")}</strong></span></div>
+                <div class="match-event-line"><span>S/Sub/B: ${esc(homeDerived.starts)}/${esc(homeDerived.subs)}/${esc(homeDerived.bench)}</span></div>
+                <div class="match-event-line"><span>Clutch: ${esc(homeDerived.clutch)} | Sub impact: ${esc(homeDerived.subImpactEvents)}</span></div>
+                <div class="match-event-line"><span>Sub G/OG: ${esc(homeDerived.subGoals)}/${esc(homeDerived.subOwnGoals)}</span></div>
+              </div>
+              <div class="match-events">
+                <div class="match-event-line"><span><strong>${esc(match.away_team_name || "Away")}</strong></span></div>
+                <div class="match-event-line"><span>S/Sub/B: ${esc(awayDerived.starts)}/${esc(awayDerived.subs)}/${esc(awayDerived.bench)}</span></div>
+                <div class="match-event-line"><span>Clutch: ${esc(awayDerived.clutch)} | Sub impact: ${esc(awayDerived.subImpactEvents)}</span></div>
+                <div class="match-event-line"><span>Sub G/OG: ${esc(awayDerived.subGoals)}/${esc(awayDerived.subOwnGoals)}</span></div>
+              </div>
             </div>
           </div>
           ` : ""}

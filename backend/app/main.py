@@ -471,6 +471,26 @@ def _extract_lineup_identity_sets(lineup_data: Any) -> dict[str, set[str]]:
     return {"steam": steam_keys, "name": name_keys}
 
 
+def _extract_summary_identity_sets(summary_rows: Any) -> dict[str, set[str]]:
+    steam_keys: set[str] = set()
+    name_keys: set[str] = set()
+    if not isinstance(summary_rows, list):
+        return {"steam": steam_keys, "name": name_keys}
+
+    for row in summary_rows:
+        if not isinstance(row, dict):
+            continue
+        steam_id = str(row.get("steam_id") or "").strip()
+        name = str(row.get("name") or row.get("player_name") or "").strip()
+        for alias in _steam_aliases(steam_id):
+            steam_keys.add(alias)
+        name_key = _norm_text_key(name)
+        if name_key:
+            name_keys.add(name_key)
+
+    return {"steam": steam_keys, "name": name_keys}
+
+
 def _infer_side_from_lineup(
     player_row: dict[str, Any],
     home_keys: dict[str, set[str]],
@@ -526,6 +546,50 @@ def _build_team_event_items(team_rows: list[dict[str, Any]]) -> list[dict[str, A
             events.append({"kind": "red", "name": name, "minutes": red_minutes, "count": len(red_minutes), "sort_minute": red_minutes[0]})
         elif red_count > 0:
             events.append({"kind": "red", "name": name, "minutes": [], "count": red_count, "sort_minute": 999})
+
+    events.sort(key=lambda item: (int(item.get("sort_minute") or 999), str(item.get("name") or "").lower()))
+    return events[:20]
+
+
+def _build_team_event_items_from_summary(summary_rows: Any) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    if not isinstance(summary_rows, list):
+        return events
+
+    for row in summary_rows:
+        if not isinstance(row, dict):
+            continue
+        name = str(row.get("name") or row.get("player_name") or row.get("steam_id") or "Unknown").strip() or "Unknown"
+        row_events = [
+            ("goal", row.get("goals")),
+            ("yellow", row.get("yellow_cards")),
+            ("red", row.get("red_cards")),
+            ("own_goal", row.get("own_goals")),
+        ]
+        for kind, raw_minutes in row_events:
+            minutes = _safe_minutes(raw_minutes)
+            if minutes:
+                events.append(
+                    {
+                        "kind": kind,
+                        "name": name,
+                        "minutes": minutes,
+                        "count": len(minutes),
+                        "sort_minute": minutes[0],
+                    }
+                )
+                continue
+            count = len(raw_minutes) if isinstance(raw_minutes, list) else _safe_int(raw_minutes)
+            if count > 0:
+                events.append(
+                    {
+                        "kind": kind,
+                        "name": name,
+                        "minutes": [],
+                        "count": count,
+                        "sort_minute": 999,
+                    }
+                )
 
     events.sort(key=lambda item: (int(item.get("sort_minute") or 999), str(item.get("name") or "").lower()))
     return events[:20]
@@ -946,32 +1010,60 @@ async def player_detail(steam_id: str) -> dict[str, Any]:
     async with db.acquire() as conn:
         player = await conn.fetchrow(
             """
-            WITH latest_pos AS (
-                SELECT DISTINCT ON (steam_id)
-                    steam_id,
+            WITH resolved_player AS (
+                SELECT p.*
+                FROM IOSCA_PLAYERS p
+                WHERE p.steam_id = $1
+                   OR EXISTS (
+                        SELECT 1
+                        FROM jsonb_array_elements_text(COALESCE(p.linked_steam_ids, '[]'::jsonb)) AS linked(value)
+                        WHERE linked.value = $1
+                   )
+                ORDER BY CASE WHEN p.steam_id = $1 THEN 0 ELSE 1 END
+                LIMIT 1
+            ),
+            scoped_steam_ids AS (
+                SELECT rp.steam_id AS steam_id
+                FROM resolved_player rp
+                UNION
+                SELECT linked.value AS steam_id
+                FROM resolved_player rp
+                JOIN LATERAL jsonb_array_elements_text(COALESCE(rp.linked_steam_ids, '[]'::jsonb)) AS linked(value) ON TRUE
+            ),
+            latest_pos AS (
+                SELECT
                     NULLIF(position, '') AS position
                 FROM PLAYER_MATCH_DATA
-                WHERE steam_id = $1
+                WHERE steam_id = ANY(ARRAY(SELECT steam_id FROM scoped_steam_ids))
                   AND position IS NOT NULL AND position <> ''
-                ORDER BY steam_id, updated_at DESC NULLS LAST, id DESC
+                ORDER BY updated_at DESC NULLS LAST, id DESC
+                LIMIT 1
             )
             SELECT
-                p.steam_id,
-                p.discord_id,
-                p.discord_name,
+                rp.steam_id,
+                rp.discord_id,
+                rp.discord_name,
+                rp.linked_steam_ids,
                 COALESCE(lp.position, 'N/A') AS position,
-                COALESCE(p.rating, 5.0) AS rating,
-                p.rating_updated_at,
-                p.registered_at,
-                p.last_active
-            FROM IOSCA_PLAYERS p
-            LEFT JOIN latest_pos lp ON lp.steam_id = p.steam_id
-            WHERE p.steam_id = $1
+                COALESCE(rp.rating, 5.0) AS rating,
+                rp.rating_updated_at,
+                rp.registered_at,
+                rp.last_active
+            FROM resolved_player rp
+            LEFT JOIN latest_pos lp ON TRUE
             """,
             steam_id,
         )
         if not player:
             raise HTTPException(status_code=404, detail="Player not found")
+
+        canonical_steam_id = str(player.get("steam_id") or steam_id)
+        linked_ids = _parse_json(player.get("linked_steam_ids"), [])
+        if not isinstance(linked_ids, list):
+            linked_ids = []
+        steam_scope = [canonical_steam_id]
+        steam_scope.extend(str(s).strip() for s in linked_ids if str(s).strip())
+        steam_scope = list(dict.fromkeys(steam_scope))
 
         totals = await conn.fetchrow(
             """
@@ -1003,11 +1095,54 @@ async def player_detail(steam_id: str) -> dict[str, Any]:
                 COALESCE(SUM(penalties), 0) AS penalties,
                 COALESCE(SUM(distance_covered), 0) AS distance_covered,
                 COALESCE(SUM(possession), 0) AS possession,
-                COALESCE(AVG(pass_accuracy), 0) AS avg_pass_accuracy
+                COALESCE(AVG(pass_accuracy), 0) AS avg_pass_accuracy,
+                COALESCE(SUM(CASE WHEN status = 'started' THEN 1 ELSE 0 END), 0) AS started_matches,
+                COALESCE(SUM(CASE WHEN status = 'substitute' THEN 1 ELSE 0 END), 0) AS substitute_matches,
+                COALESCE(SUM(CASE WHEN status = 'on_bench' THEN 1 ELSE 0 END), 0) AS bench_matches,
+                COALESCE(
+                    SUM(
+                        CASE
+                            WHEN jsonb_typeof(clutch_actions) = 'array' THEN jsonb_array_length(clutch_actions)
+                            ELSE 0
+                        END
+                    ),
+                    0
+                ) AS clutch_action_events,
+                COALESCE(
+                    SUM(
+                        CASE
+                            WHEN jsonb_typeof(sub_impact->'events') = 'array' THEN jsonb_array_length(sub_impact->'events')
+                            ELSE 0
+                        END
+                    ),
+                    0
+                ) AS sub_impact_events,
+                COALESCE(
+                    SUM(
+                        CASE
+                            WHEN jsonb_typeof(sub_impact->'summary') = 'object'
+                                 AND COALESCE(sub_impact->'summary'->>'goals', '') ~ '^-?\\d+(\\.\\d+)?$'
+                            THEN (sub_impact->'summary'->>'goals')::numeric
+                            ELSE 0
+                        END
+                    ),
+                    0
+                ) AS sub_impact_goals,
+                COALESCE(
+                    SUM(
+                        CASE
+                            WHEN jsonb_typeof(sub_impact->'summary') = 'object'
+                                 AND COALESCE(sub_impact->'summary'->>'own_goals', '') ~ '^-?\\d+(\\.\\d+)?$'
+                            THEN (sub_impact->'summary'->>'own_goals')::numeric
+                            ELSE 0
+                        END
+                    ),
+                    0
+                ) AS sub_impact_own_goals
             FROM PLAYER_MATCH_DATA
-            WHERE steam_id = $1
+            WHERE steam_id = ANY($1::text[])
             """,
-            steam_id,
+            steam_scope,
         )
 
         recent = await conn.fetch(
@@ -1038,7 +1173,10 @@ async def player_detail(steam_id: str) -> dict[str, Any]:
                 pmd.interceptions,
                 pmd.red_cards,
                 pmd.yellow_cards,
-                pmd.pass_accuracy
+                pmd.pass_accuracy,
+                pmd.status,
+                pmd.clutch_actions,
+                pmd.sub_impact
             FROM PLAYER_MATCH_DATA pmd
             JOIN MATCH_STATS ms
               ON (
@@ -1049,11 +1187,11 @@ async def player_detail(steam_id: str) -> dict[str, Any]:
             LEFT JOIN IOSCA_TEAMS at ON at.guild_id = ms.away_guild_id
             LEFT JOIN TOURNAMENT_MATCHES tm ON tm.match_stats_id = ms.id
             LEFT JOIN TOURNAMENTS t ON t.id = tm.tournament_id
-            WHERE pmd.steam_id = $1
+            WHERE pmd.steam_id = ANY($1::text[])
             ORDER BY ms.datetime DESC
             LIMIT 20
             """,
-            steam_id,
+            steam_scope,
         )
 
         team = await conn.fetchrow(
@@ -1069,7 +1207,7 @@ async def player_detail(steam_id: str) -> dict[str, Any]:
             LIMIT 1
             """,
             player.get("discord_id"),
-            steam_id,
+            canonical_steam_id,
         )
 
         outcome = await conn.fetchrow(
@@ -1103,9 +1241,9 @@ async def player_detail(steam_id: str) -> dict[str, Any]:
                    pmd.match_id::text = ms.match_id::text
                    OR (CASE WHEN pmd.match_id::text ~ '^[0-9]+$' THEN pmd.match_id::bigint END) = ms.id::bigint
               )
-            WHERE pmd.steam_id = $1
+            WHERE pmd.steam_id = ANY($1::text[])
             """,
-            steam_id,
+            steam_scope,
         )
 
         role_assets: list[dict[str, Any]] = []
@@ -1142,10 +1280,10 @@ async def player_detail(steam_id: str) -> dict[str, Any]:
     player_payload = _record_to_dict(player)
     player_payload["avatar_url"] = _discord_avatar_url(player_payload.get("discord_id"))
     player_payload["avatar_fallback_url"] = _default_discord_avatar(player_payload.get("discord_id"))
-    player_payload["steam_profile_url"] = _steam_profile_url(steam_id)
+    player_payload["steam_profile_url"] = _steam_profile_url(canonical_steam_id)
     player_payload["display_avatar_url"] = player_payload.get("avatar_url")
-    steam_data = await _get_steam_profile_data(steam_id)
-    steam64 = steam_data.get("steam_id64") or _steam_to_steam64(steam_id)
+    steam_data = await _get_steam_profile_data(canonical_steam_id)
+    steam64 = steam_data.get("steam_id64") or _steam_to_steam64(canonical_steam_id)
     if steam64:
         player_payload["steam_id64"] = steam64
     if steam_data.get("steam_name"):
@@ -1200,15 +1338,24 @@ async def player_detail(steam_id: str) -> dict[str, Any]:
     player_payload["member_roles"] = member_roles
 
     outcome_payload = _record_to_dict(outcome)
+    totals_payload = _record_to_dict(totals)
     matches_played = int(outcome_payload.get("matches_played") or 0)
     wins = int(outcome_payload.get("wins") or 0)
     draws = int(outcome_payload.get("draws") or 0)
     losses = int(outcome_payload.get("losses") or 0)
     recent_payload = _records_to_dicts(recent)
+    for item in recent_payload:
+        item["clutch_actions"] = _parse_json(item.get("clutch_actions"), [])
+        item["sub_impact"] = _parse_json(item.get("sub_impact"), {})
     recent_form = [str(item.get("result") or "").upper() for item in recent_payload if str(item.get("result") or "").upper() in {"W", "D", "L"}][:5]
     win_rate = round((wins / matches_played) * 100, 1) if matches_played > 0 else 0.0
-    total_goals = int(_record_to_dict(totals).get("goals") or 0)
-    total_assists = int(_record_to_dict(totals).get("assists") or 0)
+    total_goals = int(totals_payload.get("goals") or 0)
+    total_assists = int(totals_payload.get("assists") or 0)
+    clutch_action_events = int(totals_payload.get("clutch_action_events") or 0)
+    sub_impact_events = int(totals_payload.get("sub_impact_events") or 0)
+    started_matches = int(totals_payload.get("started_matches") or 0)
+    substitute_matches = int(totals_payload.get("substitute_matches") or 0)
+    bench_matches = int(totals_payload.get("bench_matches") or 0)
     player_summary = {
         "matches_played": matches_played,
         "wins": wins,
@@ -1218,11 +1365,18 @@ async def player_detail(steam_id: str) -> dict[str, Any]:
         "form_last5": recent_form,
         "avg_goals_per_match": round((total_goals / matches_played), 2) if matches_played > 0 else 0.0,
         "avg_assists_per_match": round((total_assists / matches_played), 2) if matches_played > 0 else 0.0,
+        "started_matches": started_matches,
+        "substitute_matches": substitute_matches,
+        "bench_matches": bench_matches,
+        "clutch_action_events": clutch_action_events,
+        "sub_impact_events": sub_impact_events,
+        "sub_impact_goals": int(float(totals_payload.get("sub_impact_goals") or 0)),
+        "sub_impact_own_goals": int(float(totals_payload.get("sub_impact_own_goals") or 0)),
     }
 
     return {
         "player": player_payload,
-        "totals": _record_to_dict(totals),
+        "totals": totals_payload,
         "recent_matches": recent_payload,
         "summary": player_summary,
         "team": _record_to_dict(team),
@@ -1306,7 +1460,7 @@ async def match_detail(match_id: str) -> dict[str, Any]:
             """
             SELECT
                 pmd.*,
-                COALESCE(ip.discord_name, pmd.steam_id) AS player_name
+                COALESCE(NULLIF(ip.discord_name, ''), NULLIF(pmd.player_name, ''), pmd.steam_id) AS player_name
             FROM PLAYER_MATCH_DATA pmd
             LEFT JOIN IOSCA_PLAYERS ip ON ip.steam_id = pmd.steam_id
             WHERE (
@@ -1325,9 +1479,22 @@ async def match_detail(match_id: str) -> dict[str, Any]:
     match_payload["home_lineup"] = _parse_json(match_payload.get("home_lineup"), [])
     match_payload["away_lineup"] = _parse_json(match_payload.get("away_lineup"), [])
     match_payload["substitutions"] = _parse_json(match_payload.get("substitutions"), [])
+    match_payload["match_summary_home"] = _parse_json(match_payload.get("match_summary_home"), [])
+    match_payload["match_summary_away"] = _parse_json(match_payload.get("match_summary_away"), [])
+    match_payload["comeback_flag"] = bool(match_payload.get("comeback_flag"))
 
     home_lineup_keys = _extract_lineup_identity_sets(match_payload.get("home_lineup"))
     away_lineup_keys = _extract_lineup_identity_sets(match_payload.get("away_lineup"))
+    home_summary_keys = _extract_summary_identity_sets(match_payload.get("match_summary_home"))
+    away_summary_keys = _extract_summary_identity_sets(match_payload.get("match_summary_away"))
+    home_identity_keys = {
+        "steam": set(home_lineup_keys["steam"]).union(home_summary_keys["steam"]),
+        "name": set(home_lineup_keys["name"]).union(home_summary_keys["name"]),
+    }
+    away_identity_keys = {
+        "steam": set(away_lineup_keys["steam"]).union(away_summary_keys["steam"]),
+        "name": set(away_lineup_keys["name"]).union(away_summary_keys["name"]),
+    }
     home_guild_key = str(match_payload.get("home_guild_id") or "").strip()
     away_guild_key = str(match_payload.get("away_guild_id") or "").strip()
     home_name_key = _norm_text_key(match_payload.get("home_team_name") or "")
@@ -1344,14 +1511,14 @@ async def match_detail(match_id: str) -> dict[str, Any]:
         side = "neutral"
         item_guild_key = str(item.get("guild_id") or "").strip()
         if is_same_side_match:
-            side = _infer_side_from_lineup(item, home_lineup_keys, away_lineup_keys)
+            side = _infer_side_from_lineup(item, home_identity_keys, away_identity_keys)
         else:
             if item_guild_key and item_guild_key == home_guild_key:
                 side = "home"
             elif item_guild_key and item_guild_key == away_guild_key:
                 side = "away"
             else:
-                side = _infer_side_from_lineup(item, home_lineup_keys, away_lineup_keys)
+                side = _infer_side_from_lineup(item, home_identity_keys, away_identity_keys)
         grouped[side].append(item)
 
     all_player_stats = (
@@ -1386,6 +1553,11 @@ async def match_detail(match_id: str) -> dict[str, Any]:
                 "mvp_stats": mvp_payload.get("stats", []),
             }
 
+    summary_home_events = _build_team_event_items_from_summary(match_payload.get("match_summary_home"))
+    summary_away_events = _build_team_event_items_from_summary(match_payload.get("match_summary_away"))
+    row_home_events = _build_team_event_items(grouped.get("home", []))
+    row_away_events = _build_team_event_items(grouped.get("away", []))
+
     return {
         "match": match_payload,
         "player_stats": {
@@ -1395,8 +1567,8 @@ async def match_detail(match_id: str) -> dict[str, Any]:
         },
         "mvp": mvp_payload,
         "team_events": {
-            "home": _build_team_event_items(grouped.get("home", [])),
-            "away": _build_team_event_items(grouped.get("away", [])),
+            "home": summary_home_events or row_home_events,
+            "away": summary_away_events or row_away_events,
         },
     }
 
@@ -1450,18 +1622,35 @@ async def tournament_detail(tournament_id: int) -> dict[str, Any]:
                 LEFT JOIN IOSCA_TEAMS it ON it.guild_id = tt.guild_id
                 WHERE tt.tournament_id = $1
             ),
+            forfeited_fixtures AS (
+                SELECT fixture_id
+                FROM TOURNAMENT_FORFEITS
+                WHERE tournament_id = $1
+                  AND fixture_id IS NOT NULL
+            ),
             played_matches AS (
                 SELECT
                     f.home_guild_id AS home_id,
                     f.away_guild_id AS away_id,
-                    COALESCE(m.home_score, 0)::int AS home_score,
-                    COALESCE(m.away_score, 0)::int AS away_score
+                    CASE
+                        WHEN m.home_guild_id = f.home_guild_id AND m.away_guild_id = f.away_guild_id THEN COALESCE(m.home_score, 0)::int
+                        WHEN m.home_guild_id = f.away_guild_id AND m.away_guild_id = f.home_guild_id THEN COALESCE(m.away_score, 0)::int
+                        ELSE COALESCE(m.home_score, 0)::int
+                    END AS home_score,
+                    CASE
+                        WHEN m.home_guild_id = f.home_guild_id AND m.away_guild_id = f.away_guild_id THEN COALESCE(m.away_score, 0)::int
+                        WHEN m.home_guild_id = f.away_guild_id AND m.away_guild_id = f.home_guild_id THEN COALESCE(m.home_score, 0)::int
+                        ELSE COALESCE(m.away_score, 0)::int
+                    END AS away_score
                 FROM TOURNAMENT_FIXTURES f
                 JOIN MATCH_STATS m ON m.id = f.played_match_stats_id
                 WHERE f.tournament_id = $1
                   AND COALESCE(f.is_played, FALSE) = TRUE
                   AND f.home_guild_id IS NOT NULL
                   AND f.away_guild_id IS NOT NULL
+                  AND NOT EXISTS (
+                      SELECT 1 FROM forfeited_fixtures ff WHERE ff.fixture_id = f.id
+                  )
             ),
             forfeits AS (
                 SELECT
@@ -1554,15 +1743,43 @@ async def tournament_detail(tournament_id: int) -> dict[str, Any]:
                 f.played_at,
                 f.home_guild_id,
                 f.away_guild_id,
-                m.home_score,
-                m.away_score,
+                CASE
+                    WHEN tf.id IS NOT NULL THEN
+                        CASE
+                            WHEN tf.winner_guild_id = f.home_guild_id THEN COALESCE(tf.score_forfeit, 10)::int
+                            WHEN tf.forfeiting_guild_id = f.home_guild_id THEN 0::int
+                            ELSE COALESCE(m.home_score, 0)::int
+                        END
+                    ELSE
+                        CASE
+                            WHEN m.home_guild_id = f.home_guild_id AND m.away_guild_id = f.away_guild_id THEN COALESCE(m.home_score, 0)::int
+                            WHEN m.home_guild_id = f.away_guild_id AND m.away_guild_id = f.home_guild_id THEN COALESCE(m.away_score, 0)::int
+                            ELSE COALESCE(m.home_score, 0)::int
+                        END
+                END AS home_score,
+                CASE
+                    WHEN tf.id IS NOT NULL THEN
+                        CASE
+                            WHEN tf.winner_guild_id = f.away_guild_id THEN COALESCE(tf.score_forfeit, 10)::int
+                            WHEN tf.forfeiting_guild_id = f.away_guild_id THEN 0::int
+                            ELSE COALESCE(m.away_score, 0)::int
+                        END
+                    ELSE
+                        CASE
+                            WHEN m.home_guild_id = f.home_guild_id AND m.away_guild_id = f.away_guild_id THEN COALESCE(m.away_score, 0)::int
+                            WHEN m.home_guild_id = f.away_guild_id AND m.away_guild_id = f.home_guild_id THEN COALESCE(m.home_score, 0)::int
+                            ELSE COALESCE(m.away_score, 0)::int
+                        END
+                END AS away_score,
                 m.datetime AS match_datetime,
+                (tf.id IS NOT NULL) AS is_forfeit,
                 COALESCE(ht.guild_name, f.home_name_raw, 'Home') AS home_team_name,
                 COALESCE(at.guild_name, f.away_name_raw, 'Away') AS away_team_name,
                 COALESCE(ht.guild_icon, '') AS home_team_icon,
                 COALESCE(at.guild_icon, '') AS away_team_icon
             FROM TOURNAMENT_FIXTURES f
             LEFT JOIN MATCH_STATS m ON m.id = f.played_match_stats_id
+            LEFT JOIN TOURNAMENT_FORFEITS tf ON tf.tournament_id = f.tournament_id AND tf.fixture_id = f.id
             LEFT JOIN IOSCA_TEAMS ht ON ht.guild_id = f.home_guild_id
             LEFT JOIN IOSCA_TEAMS at ON at.guild_id = f.away_guild_id
             WHERE f.tournament_id = $1
@@ -1628,6 +1845,15 @@ async def tournament_detail(tournament_id: int) -> dict[str, Any]:
                   )
                 LEFT JOIN IOSCA_PLAYERS ip ON ip.steam_id = pmd.steam_id
                 WHERE tm.tournament_id = $1
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM TOURNAMENT_FIXTURES fx
+                      JOIN TOURNAMENT_FORFEITS tf
+                        ON tf.tournament_id = tm.tournament_id
+                       AND tf.fixture_id = fx.id
+                      WHERE fx.tournament_id = tm.tournament_id
+                        AND fx.played_match_stats_id = tm.match_stats_id
+                  )
                 {extra_where}
                 GROUP BY pmd.steam_id
                 ORDER BY total DESC, player_name ASC
@@ -1725,6 +1951,15 @@ async def tournament_detail(tournament_id: int) -> dict[str, Any]:
                   )
                 LEFT JOIN IOSCA_PLAYERS ip ON ip.steam_id = pmd.steam_id
                 WHERE tm.tournament_id = $1
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM TOURNAMENT_FIXTURES fx
+                      JOIN TOURNAMENT_FORFEITS tf
+                        ON tf.tournament_id = tm.tournament_id
+                       AND tf.fixture_id = fx.id
+                      WHERE fx.tournament_id = tm.tournament_id
+                        AND fx.played_match_stats_id = tm.match_stats_id
+                  )
                 ORDER BY tm.match_stats_id ASC, pmd.id DESC
                 """,
                 tournament_id,
