@@ -215,20 +215,27 @@
             <tbody>
               ${recent.length ? recent.map((m) => {
                 const result = m.result || recentResult(m);
+                const matchInner = `
+                  ${teamCell(m.home_team_name, m.home_team_icon, true)}
+                  <strong>${esc(m.home_score)} - ${esc(m.away_score)}</strong>
+                  ${teamCell(m.away_team_name, m.away_team_icon, false)}
+                `;
+                const matchCell = m.is_forfeit
+                  ? `<span class="mini-match-link">${matchInner}</span>`
+                  : `<a href="match.html?id=${esc(m.id)}" class="mini-match-link">${matchInner}</a>`;
+                const flagParts = [
+                  m.extratime ? '<span class="badge">ET</span>' : '',
+                  m.penalties ? '<span class="badge">PEN</span>' : '',
+                  m.is_forfeit ? '<span class="badge">FORFEIT</span>' : ''
+                ].filter(Boolean).join(' ');
                 return `
                   <tr>
                     <td>${resultBadge(result)}</td>
                     <td>${fmtDateTime(m.datetime)}</td>
                     <td>${esc(competitionLabel(m))}</td>
-                    <td>
-                      <a href="match.html?id=${esc(m.id)}" class="mini-match-link">
-                        ${teamCell(m.home_team_name, m.home_team_icon, true)}
-                        <strong>${esc(m.home_score)} - ${esc(m.away_score)}</strong>
-                        ${teamCell(m.away_team_name, m.away_team_icon, false)}
-                      </a>
-                    </td>
+                    <td>${matchCell}</td>
                     <td>${esc(m.game_type || '-')}</td>
-                    <td>${m.extratime ? '<span class="badge">ET</span>' : ''} ${m.penalties ? '<span class="badge">PEN</span>' : ''}</td>
+                    <td>${flagParts || '-'}</td>
                   </tr>
                 `;
               }).join('') : '<tr><td colspan="6">No matches yet.</td></tr>'}

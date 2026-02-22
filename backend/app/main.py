@@ -115,6 +115,27 @@ def _safe_int(value: Any) -> int:
         return 0
 
 
+def _normalize_mvp_stats(value: Any) -> list[str]:
+    parsed = value
+    if isinstance(parsed, str):
+        raw = parsed.strip()
+        if not raw:
+            return []
+        try:
+            parsed = json.loads(raw)
+        except Exception:
+            return [raw]
+    if isinstance(parsed, list):
+        out: list[str] = []
+        for item in parsed:
+            text = str(item or "").strip()
+            if text:
+                out.append(text)
+        return out
+    text = str(parsed or "").strip()
+    return [text] if text else []
+
+
 def _parse_event_map(raw: Any) -> dict[str, list[int]]:
     if isinstance(raw, str):
         try:
@@ -173,6 +194,7 @@ def _merge_match_player_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]
         if not current:
             item = dict(row)
             item["event_timestamps"] = _parse_event_map(item.get("event_timestamps"))
+            item["mvp_key_stats"] = _normalize_mvp_stats(item.get("mvp_key_stats"))
             merged[key] = item
             continue
 
@@ -191,7 +213,7 @@ def _merge_match_player_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]
             if row.get("mvp_score") is not None:
                 current["mvp_score"] = row.get("mvp_score")
             if row.get("mvp_key_stats") is not None:
-                current["mvp_key_stats"] = row.get("mvp_key_stats")
+                current["mvp_key_stats"] = _normalize_mvp_stats(row.get("mvp_key_stats"))
 
         if not current.get("player_name") and row.get("player_name"):
             current["player_name"] = row.get("player_name")
@@ -1557,7 +1579,7 @@ async def match_detail(match_id: str) -> dict[str, Any]:
             "name": best.get("player_name") or "Unknown",
             "position": str(best.get("position") or "").upper(),
             "score": float(best.get("mvp_score") if best.get("mvp_score") is not None else (best.get("match_rating") or 0)),
-            "stats": list(best.get("mvp_key_stats") or []),
+            "stats": _normalize_mvp_stats(best.get("mvp_key_stats")),
         }
     elif shared_get_mvp_data:
         try:
@@ -1580,7 +1602,7 @@ async def match_detail(match_id: str) -> dict[str, Any]:
                 **mvp_payload,
                 **linked,
                 "mvp_score": mvp_payload.get("score"),
-                "mvp_stats": mvp_payload.get("stats", []),
+                "mvp_stats": _normalize_mvp_stats(mvp_payload.get("stats", [])),
             }
 
     summary_home_events = _build_team_event_items_from_summary(match_payload.get("match_summary_home"))
@@ -1636,6 +1658,7 @@ async def tournaments() -> dict[str, Any]:
 
 @app.get("/api/tournaments/{tournament_id}")
 async def tournament_detail(tournament_id: int) -> dict[str, Any]:
+    orphan_form_rows: list[dict[str, Any]] = []
     async with db.acquire() as conn:
         tournament = await conn.fetchrow("SELECT * FROM TOURNAMENTS WHERE id = $1", tournament_id)
         if not tournament:
@@ -1682,6 +1705,19 @@ async def tournament_detail(tournament_id: int) -> dict[str, Any]:
                       SELECT 1 FROM forfeited_fixtures ff WHERE ff.fixture_id = f.id
                   )
             ),
+            orphan_matches AS (
+                SELECT
+                    tm.home_guild_id AS home_id,
+                    tm.away_guild_id AS away_id,
+                    COALESCE(tm.home_score, 0)::int AS home_score,
+                    COALESCE(tm.away_score, 0)::int AS away_score
+                FROM TOURNAMENT_MATCHES tm
+                LEFT JOIN TOURNAMENT_FIXTURES f
+                  ON f.tournament_id = tm.tournament_id
+                 AND f.played_match_stats_id = tm.match_stats_id
+                WHERE tm.tournament_id = $1
+                  AND f.id IS NULL
+            ),
             forfeits AS (
                 SELECT
                     tf.winner_guild_id AS home_id,
@@ -1693,6 +1729,8 @@ async def tournament_detail(tournament_id: int) -> dict[str, Any]:
             ),
             all_matches AS (
                 SELECT * FROM played_matches
+                UNION ALL
+                SELECT * FROM orphan_matches
                 UNION ALL
                 SELECT * FROM forfeits
             ),
@@ -2059,7 +2097,55 @@ async def tournament_detail(tournament_id: int) -> dict[str, Any]:
             "mvps": mvp_leaders,
         }
 
+        orphan_rows = await conn.fetch(
+            """
+            SELECT
+                tm.home_guild_id,
+                tm.away_guild_id,
+                COALESCE(tm.home_score, 0)::int AS home_score,
+                COALESCE(tm.away_score, 0)::int AS away_score,
+                tm.played_at AS played_at,
+                NULL::timestamp AS match_datetime,
+                COALESCE(ht.guild_name, '') AS home_team_name,
+                COALESCE(at.guild_name, '') AS away_team_name
+            FROM TOURNAMENT_MATCHES tm
+            LEFT JOIN TOURNAMENT_FIXTURES f
+              ON f.tournament_id = tm.tournament_id
+             AND f.played_match_stats_id = tm.match_stats_id
+            LEFT JOIN IOSCA_TEAMS ht ON ht.guild_id = tm.home_guild_id
+            LEFT JOIN IOSCA_TEAMS at ON at.guild_id = tm.away_guild_id
+            WHERE tm.tournament_id = $1
+              AND f.id IS NULL
+            """,
+            tournament_id,
+        )
+        orphan_form_rows = _records_to_dicts(orphan_rows)
+
     team_forms: dict[str, list[str]] = defaultdict(list)
+    team_id_by_name: dict[str, str] = {}
+    for row in standings:
+        team_id = str(row.get("guild_id") or "").strip()
+        if not team_id:
+            continue
+        for raw_name in [row.get("team_name")]:
+            name_key = _norm_text_key(raw_name)
+            if name_key and name_key not in team_id_by_name:
+                team_id_by_name[name_key] = team_id
+    for row in teams:
+        team_id = str(row.get("guild_id") or "").strip()
+        if not team_id:
+            continue
+        for raw_name in [row.get("team_name")]:
+            name_key = _norm_text_key(raw_name)
+            if name_key and name_key not in team_id_by_name:
+                team_id_by_name[name_key] = team_id
+
+    def _resolve_form_team_id(guild_id_value: Any, team_name_value: Any) -> str:
+        gid = str(guild_id_value or "").strip()
+        if gid:
+            return gid
+        return team_id_by_name.get(_norm_text_key(team_name_value), "")
+
     played_fixtures: list[Any] = []
     for fixture in fixtures:
         if not fixture.get("is_played"):
@@ -2067,6 +2153,10 @@ async def tournament_detail(tournament_id: int) -> dict[str, Any]:
         if fixture.get("home_score") is None or fixture.get("away_score") is None:
             continue
         played_fixtures.append(fixture)
+    for row in orphan_form_rows:
+        if row.get("home_score") is None or row.get("away_score") is None:
+            continue
+        played_fixtures.append(row)
 
     def _fixture_sort_key(item: Any) -> datetime:
         dt_value = item.get("played_at") or item.get("match_datetime")
@@ -2079,8 +2169,8 @@ async def tournament_detail(tournament_id: int) -> dict[str, Any]:
     played_fixtures.sort(key=_fixture_sort_key)
 
     for fixture in played_fixtures:
-        home_id = str(fixture.get("home_guild_id") or "").strip()
-        away_id = str(fixture.get("away_guild_id") or "").strip()
+        home_id = _resolve_form_team_id(fixture.get("home_guild_id"), fixture.get("home_team_name"))
+        away_id = _resolve_form_team_id(fixture.get("away_guild_id"), fixture.get("away_team_name"))
         if not home_id or not away_id:
             continue
         try:
@@ -2211,56 +2301,134 @@ async def team_detail(guild_id: str) -> dict[str, Any]:
 
         team_stats = await conn.fetchrow(
             """
+            WITH regular_matches AS (
+                SELECT
+                    CASE
+                        WHEN m.home_score = m.away_score THEN 'D'
+                        WHEN m.home_guild_id::text = $1 AND m.home_score > m.away_score THEN 'W'
+                        WHEN m.away_guild_id::text = $1 AND m.away_score > m.home_score THEN 'W'
+                        ELSE 'L'
+                    END AS result,
+                    CASE
+                        WHEN m.home_guild_id::text = $1 THEN COALESCE(m.home_score, 0)::int
+                        WHEN m.away_guild_id::text = $1 THEN COALESCE(m.away_score, 0)::int
+                        ELSE 0
+                    END AS goals_for,
+                    CASE
+                        WHEN m.home_guild_id::text = $1 THEN COALESCE(m.away_score, 0)::int
+                        WHEN m.away_guild_id::text = $1 THEN COALESCE(m.home_score, 0)::int
+                        ELSE 0
+                    END AS goals_against
+                FROM MATCH_STATS m
+                WHERE m.home_guild_id::text = $1 OR m.away_guild_id::text = $1
+            ),
+            forfeit_matches AS (
+                SELECT
+                    CASE WHEN tf.winner_guild_id::text = $1 THEN 'W' ELSE 'L' END AS result,
+                    CASE
+                        WHEN tf.winner_guild_id::text = $1 THEN COALESCE(tf.score_forfeit, 10)::int
+                        ELSE 0
+                    END AS goals_for,
+                    CASE
+                        WHEN tf.forfeiting_guild_id::text = $1 THEN COALESCE(tf.score_forfeit, 10)::int
+                        ELSE 0
+                    END AS goals_against
+                FROM TOURNAMENT_FORFEITS tf
+                WHERE tf.winner_guild_id::text = $1 OR tf.forfeiting_guild_id::text = $1
+            ),
+            all_matches AS (
+                SELECT * FROM regular_matches
+                UNION ALL
+                SELECT * FROM forfeit_matches
+            )
             SELECT
                 COUNT(*) AS matches_played,
-                SUM(CASE
-                        WHEN m.home_guild_id::text = $1 AND m.home_score > m.away_score THEN 1
-                        WHEN m.away_guild_id::text = $1 AND m.away_score > m.home_score THEN 1
-                        ELSE 0 END) AS wins,
-                SUM(CASE WHEN m.home_score = m.away_score THEN 1 ELSE 0 END) AS draws,
-                SUM(CASE
-                        WHEN m.home_guild_id::text = $1 AND m.home_score < m.away_score THEN 1
-                        WHEN m.away_guild_id::text = $1 AND m.away_score < m.home_score THEN 1
-                        ELSE 0 END) AS losses,
-                COALESCE(SUM(CASE
-                        WHEN m.home_guild_id::text = $1 THEN m.home_score
-                        WHEN m.away_guild_id::text = $1 THEN m.away_score
-                        ELSE 0 END), 0) AS goals_for,
-                COALESCE(SUM(CASE
-                        WHEN m.home_guild_id::text = $1 THEN m.away_score
-                        WHEN m.away_guild_id::text = $1 THEN m.home_score
-                        ELSE 0 END), 0) AS goals_against
-            FROM MATCH_STATS m
-            WHERE m.home_guild_id::text = $1 OR m.away_guild_id::text = $1
+                COALESCE(SUM(CASE WHEN result = 'W' THEN 1 ELSE 0 END), 0) AS wins,
+                COALESCE(SUM(CASE WHEN result = 'D' THEN 1 ELSE 0 END), 0) AS draws,
+                COALESCE(SUM(CASE WHEN result = 'L' THEN 1 ELSE 0 END), 0) AS losses,
+                COALESCE(SUM(goals_for), 0) AS goals_for,
+                COALESCE(SUM(goals_against), 0) AS goals_against
+            FROM all_matches
             """,
             guild_id,
         )
 
         recent_matches = await conn.fetch(
             """
-            SELECT
-                m.id,
-                m.datetime,
-                m.game_type,
-                m.extratime,
-                m.penalties,
-                m.home_guild_id,
-                m.away_guild_id,
-                COALESCE(ht.guild_name, m.home_team_name) AS home_team_name,
-                COALESCE(at.guild_name, m.away_team_name) AS away_team_name,
-                COALESCE(ht.guild_icon, '') AS home_team_icon,
-                COALESCE(at.guild_icon, '') AS away_team_icon,
-                m.home_score,
-                m.away_score,
-                tm.tournament_id,
-                t.name AS tournament_name
-            FROM MATCH_STATS m
-            LEFT JOIN IOSCA_TEAMS ht ON ht.guild_id = m.home_guild_id
-            LEFT JOIN IOSCA_TEAMS at ON at.guild_id = m.away_guild_id
-            LEFT JOIN TOURNAMENT_MATCHES tm ON tm.match_stats_id = m.id
-            LEFT JOIN TOURNAMENTS t ON t.id = tm.tournament_id
-            WHERE m.home_guild_id::text = $1 OR m.away_guild_id::text = $1
-            ORDER BY m.datetime DESC
+            WITH regular_matches AS (
+                SELECT
+                    m.id,
+                    m.datetime,
+                    m.game_type,
+                    m.extratime,
+                    m.penalties,
+                    m.home_guild_id,
+                    m.away_guild_id,
+                    COALESCE(ht.guild_name, m.home_team_name) AS home_team_name,
+                    COALESCE(at.guild_name, m.away_team_name) AS away_team_name,
+                    COALESCE(ht.guild_icon, '') AS home_team_icon,
+                    COALESCE(at.guild_icon, '') AS away_team_icon,
+                    COALESCE(m.home_score, 0)::int AS home_score,
+                    COALESCE(m.away_score, 0)::int AS away_score,
+                    tm.tournament_id,
+                    t.name AS tournament_name,
+                    FALSE AS is_forfeit,
+                    CASE
+                        WHEN COALESCE(m.home_score, 0) = COALESCE(m.away_score, 0) THEN 'D'
+                        WHEN m.home_guild_id::text = $1 THEN CASE WHEN COALESCE(m.home_score, 0) > COALESCE(m.away_score, 0) THEN 'W' ELSE 'L' END
+                        WHEN m.away_guild_id::text = $1 THEN CASE WHEN COALESCE(m.away_score, 0) > COALESCE(m.home_score, 0) THEN 'W' ELSE 'L' END
+                        ELSE '-'
+                    END AS result
+                FROM MATCH_STATS m
+                LEFT JOIN IOSCA_TEAMS ht ON ht.guild_id = m.home_guild_id
+                LEFT JOIN IOSCA_TEAMS at ON at.guild_id = m.away_guild_id
+                LEFT JOIN TOURNAMENT_MATCHES tm ON tm.match_stats_id = m.id
+                LEFT JOIN TOURNAMENTS t ON t.id = tm.tournament_id
+                WHERE m.home_guild_id::text = $1 OR m.away_guild_id::text = $1
+            ),
+            forfeit_matches AS (
+                SELECT
+                    NULL::bigint AS id,
+                    COALESCE(f.played_at, tf.created_at, f.created_at) AS datetime,
+                    COALESCE(t.format, 'forfeit') AS game_type,
+                    FALSE AS extratime,
+                    FALSE AS penalties,
+                    f.home_guild_id,
+                    f.away_guild_id,
+                    COALESCE(ht.guild_name, f.home_name_raw, 'Home') AS home_team_name,
+                    COALESCE(at.guild_name, f.away_name_raw, 'Away') AS away_team_name,
+                    COALESCE(ht.guild_icon, '') AS home_team_icon,
+                    COALESCE(at.guild_icon, '') AS away_team_icon,
+                    CASE
+                        WHEN tf.winner_guild_id = f.home_guild_id THEN COALESCE(tf.score_forfeit, 10)::int
+                        WHEN tf.forfeiting_guild_id = f.home_guild_id THEN 0::int
+                        ELSE 0::int
+                    END AS home_score,
+                    CASE
+                        WHEN tf.winner_guild_id = f.away_guild_id THEN COALESCE(tf.score_forfeit, 10)::int
+                        WHEN tf.forfeiting_guild_id = f.away_guild_id THEN 0::int
+                        ELSE 0::int
+                    END AS away_score,
+                    f.tournament_id,
+                    t.name AS tournament_name,
+                    TRUE AS is_forfeit,
+                    CASE WHEN tf.winner_guild_id::text = $1 THEN 'W' ELSE 'L' END AS result
+                FROM TOURNAMENT_FORFEITS tf
+                JOIN TOURNAMENT_FIXTURES f
+                  ON f.id = tf.fixture_id
+                 AND f.tournament_id = tf.tournament_id
+                LEFT JOIN TOURNAMENTS t ON t.id = f.tournament_id
+                LEFT JOIN IOSCA_TEAMS ht ON ht.guild_id = f.home_guild_id
+                LEFT JOIN IOSCA_TEAMS at ON at.guild_id = f.away_guild_id
+                WHERE tf.winner_guild_id::text = $1 OR tf.forfeiting_guild_id::text = $1
+            )
+            SELECT *
+            FROM (
+                SELECT * FROM regular_matches
+                UNION ALL
+                SELECT * FROM forfeit_matches
+            ) merged
+            ORDER BY datetime DESC NULLS LAST
             LIMIT 20
             """,
             guild_id,
@@ -2320,17 +2488,19 @@ async def team_detail(guild_id: str) -> dict[str, Any]:
     recent_payload = _records_to_dicts(recent_matches)
     form_last5: list[str] = []
     for match in recent_payload:
-        home_score = int(match.get("home_score") or 0)
-        away_score = int(match.get("away_score") or 0)
-        home_id = str(match.get("home_guild_id") or "").strip()
-        away_id = str(match.get("away_guild_id") or "").strip()
-        result = "-"
-        if home_score == away_score:
-            result = "D"
-        elif home_id == guild_id:
-            result = "W" if home_score > away_score else "L"
-        elif away_id == guild_id:
-            result = "W" if away_score > home_score else "L"
+        result = str(match.get("result") or "").strip().upper()
+        if result not in {"W", "D", "L"}:
+            home_score = int(match.get("home_score") or 0)
+            away_score = int(match.get("away_score") or 0)
+            home_id = str(match.get("home_guild_id") or "").strip()
+            away_id = str(match.get("away_guild_id") or "").strip()
+            result = "-"
+            if home_score == away_score:
+                result = "D"
+            elif home_id == guild_id:
+                result = "W" if home_score > away_score else "L"
+            elif away_id == guild_id:
+                result = "W" if away_score > home_score else "L"
         match["result"] = result
         if result in {"W", "D", "L"} and len(form_last5) < 5:
             form_last5.append(result)

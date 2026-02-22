@@ -869,6 +869,13 @@ tbody tr:hover {
   font-size: 1.7rem;
   line-height: 1;
   font-family: "Orbitron", "Rajdhani", sans-serif;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mvp-name-emoji {
+  filter: drop-shadow(0 0 8px rgba(255, 213, 87, 0.8));
 }
 
 .mvp-sub {
@@ -1053,6 +1060,11 @@ tbody tr:hover {
   justify-items: center;
   gap: 2px;
   min-width: 84px;
+  z-index: 2;
+}
+
+.pitch-player:hover {
+  z-index: 30;
 }
 
 .pitch-rating-chip {
@@ -1090,6 +1102,7 @@ tbody tr:hover {
   clip-path: polygon(0 24%, 14% 7%, 30% 7%, 37% 0, 63% 0, 70% 7%, 86% 7%, 100% 24%, 88% 35%, 88% 100%, 12% 100%, 12% 35%);
   text-shadow: 0 1px 1px rgba(0, 0, 0, 0.35);
   border: 1px solid rgba(222, 245, 255, 0.4);
+  transition: transform 0.2s ease, box-shadow 0.2s ease, filter 0.2s ease;
 }
 
 .pitch-player-name {
@@ -1107,6 +1120,47 @@ tbody tr:hover {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  transition: box-shadow 0.2s ease, border-color 0.2s ease, color 0.2s ease, transform 0.2s ease;
+}
+
+.pitch-player-name-link {
+  color: inherit;
+  text-decoration: none;
+}
+
+.pitch-player-name-link:hover {
+  text-decoration: underline;
+}
+
+.mvp-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  font-size: 0.72rem;
+  filter: drop-shadow(0 0 5px rgba(255, 213, 87, 0.78));
+}
+
+.pitch-player.is-mvp .pitch-player-name {
+  border-color: rgba(255, 214, 102, 0.75);
+  box-shadow: 0 0 12px rgba(255, 214, 102, 0.35);
+}
+
+.pitch-player:hover .pitch-jersey {
+  transform: translateY(-1px) scale(1.04);
+  box-shadow: 0 0 18px rgba(255, 238, 16, 0.55);
+  filter: saturate(1.15);
+}
+
+.pitch-player:hover .pitch-player-name {
+  border-color: rgba(255, 238, 16, 0.72);
+  box-shadow: 0 0 15px rgba(255, 238, 16, 0.32);
+  color: #fff5b1;
+  transform: translateY(-1px);
 }
 
 .pitch-player-stats {
@@ -1115,6 +1169,71 @@ tbody tr:hover {
   justify-content: center;
   gap: 5px;
   min-height: 22px;
+}
+
+.pitch-hover-card {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%) translateY(6px);
+  width: 240px;
+  padding: 9px 10px;
+  border-radius: 11px;
+  border: 1px solid rgba(144, 190, 255, 0.34);
+  background: linear-gradient(180deg, rgba(10, 24, 45, 0.96), rgba(7, 18, 34, 0.98));
+  box-shadow: 0 14px 26px rgba(0, 0, 0, 0.36);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+  z-index: 40;
+}
+
+.pitch-player:hover .pitch-hover-card {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(-50%) translateY(0);
+}
+
+.pitch-hover-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.pitch-hover-head strong {
+  color: #f0f6ff;
+  font-size: 0.86rem;
+}
+
+.pitch-hover-head span {
+  color: #b8d7ff;
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.pitch-hover-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 3px;
+}
+
+.pitch-hover-grid span {
+  color: #d6e9ff;
+  font-size: 0.74rem;
+  line-height: 1.25;
+}
+
+.pitch-hover-grid b {
+  color: #f7fcff;
+}
+
+.pitch-hover-foot {
+  margin-top: 6px;
+  color: #93bff2;
+  font-size: 0.68rem;
 }
 
 .pitch-stat-chip {

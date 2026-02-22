@@ -136,10 +136,27 @@
           ${fixtures.length ? fixtures.map((f) => {
             const status = f.is_played ? "Played" : (f.is_active ? "Pending" : "Closed");
             const matchLink = f.played_match_stats_id ? `<a href="match.html?id=${esc(f.played_match_stats_id)}">View match</a>` : "";
+            const homeScore = Number(f.home_score ?? 0);
+            const awayScore = Number(f.away_score ?? 0);
+            const scoreText = f.is_played ? `${esc(homeScore)} - ${esc(awayScore)}` : "TBD";
+            let homeResult = "-";
+            let awayResult = "-";
+            if (f.is_played && Number.isFinite(homeScore) && Number.isFinite(awayScore)) {
+              if (homeScore > awayScore) {
+                homeResult = "W";
+                awayResult = "L";
+              } else if (homeScore < awayScore) {
+                homeResult = "L";
+                awayResult = "W";
+              } else {
+                homeResult = "D";
+                awayResult = "D";
+              }
+            }
             return `
               <div class="item">
                 <div><strong>${esc(f.week_label || `Week ${f.week_number || ""}`)}</strong> | ${esc(status)}</div>
-                <div>${esc(f.home_team_name)} vs ${esc(f.away_team_name)}</div>
+                <div>${esc(f.home_team_name)} (${esc(homeResult)}) ${scoreText} (${esc(awayResult)}) ${esc(f.away_team_name)}${f.is_forfeit ? ' <span class="badge">FORFEIT</span>' : ''}</div>
                 <div class="meta">${f.played_at ? fmtDateTime(f.played_at) : "Not played yet"} ${matchLink ? "| " + matchLink : ""}</div>
               </div>
             `;

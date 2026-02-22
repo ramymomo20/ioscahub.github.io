@@ -57,6 +57,15 @@
     return String(player && (player.player_name || player.steam_id) || "Unknown");
   }
 
+  function mvpIdentity(mvp) {
+    if (!mvp) return { steam: "", name: "", pos: "" };
+    return {
+      steam: String(mvp.steam_id || "").trim(),
+      name: normName(mvp.player_name || mvp.name || ""),
+      pos: String(mvp.position || "").toUpperCase().trim()
+    };
+  }
+
   function shortWhenLabel(dateValue) {
     if (!dateValue) return "";
     const date = new Date(dateValue);
@@ -302,6 +311,17 @@
     return fallback;
   }
 
+  function normalizeMvpStats(value) {
+    const parsed = parseJsonValue(value, value);
+    if (Array.isArray(parsed)) {
+      return parsed
+        .map((item) => String(item || "").trim())
+        .filter((item) => item.length > 0);
+    }
+    const text = String(parsed || "").trim();
+    return text ? [text] : [];
+  }
+
   function teamDerivedMetrics(sideStats) {
     const out = {
       starts: 0,
@@ -413,7 +433,43 @@
     return `<div class="pitch-player-stats">${chips.join("")}</div>`;
   }
 
-  function lineupCardHtml(teamName, teamIcon, entries, lookup, gameType) {
+  function playerHoverCardHtml(player, profileSteamId) {
+    if (!player) return "";
+    const rating = playerRating10(player);
+    const goals = pickNum(player, ["goals"]);
+    const assists = pickNum(player, ["assists"]);
+    const shotsOnGoal = pickNum(player, ["shots_on_goal", "shotsOnGoal"]);
+    const passesCompleted = pickNum(player, ["passes_completed", "passesCompleted"]);
+    const passesAttempted = pickNum(player, ["passes_attempted", "passesAttempted"]);
+    const interceptions = pickNum(player, ["interceptions"]);
+    const tackles = pickNum(player, ["tackles", "sliding_tackles_completed", "slidingTacklesCompleted"]);
+    const saves = pickNum(player, ["keeper_saves", "keeperSaves"]) + pickNum(player, ["keeper_saves_caught", "keeperSavesCaught"]);
+    const yellows = pickNum(player, ["yellow_cards", "yellowCards"]);
+    const reds = pickNum(player, ["red_cards", "redCards"]);
+    const passAcc = passesAttempted > 0 ? `${((passesCompleted / passesAttempted) * 100).toFixed(1)}%` : "0.0%";
+
+    return `
+      <div class="pitch-hover-card">
+        <div class="pitch-hover-head">
+          <strong>${esc(safeName(player))}</strong>
+          <span>${esc(String(player.position || "").toUpperCase() || "N/A")} | ${esc(rating.toFixed(1))}</span>
+        </div>
+        <div class="pitch-hover-grid">
+          <span>Goals: <b>${esc(goals)}</b></span>
+          <span>Assists: <b>${esc(assists)}</b></span>
+          <span>Shots on goal: <b>${esc(shotsOnGoal)}</b></span>
+          <span>Passes: <b>${esc(passesCompleted)}/${esc(passesAttempted)} (${esc(passAcc)})</b></span>
+          <span>Interceptions: <b>${esc(interceptions)}</b></span>
+          <span>Tackles: <b>${esc(tackles)}</b></span>
+          <span>Saves: <b>${esc(saves)}</b></span>
+          <span>Cards: <b>${esc(yellows)}Y / ${esc(reds)}R</b></span>
+        </div>
+        ${profileSteamId ? '<div class="pitch-hover-foot">Click name to open full player profile</div>' : ""}
+      </div>
+    `;
+  }
+
+  function lineupCardHtml(teamName, teamIcon, entries, lookup, gameType, mvpKey) {
     const formationKey = detectFormation(entries, gameType);
     const slots = FORMATIONS[formationKey] || FORMATIONS.eight;
     const started = entries
@@ -455,12 +511,25 @@
 
       const stats = resolvePlayerStats(entry, lookup);
       const rating = stats ? playerRating10(stats) : null;
+      const profileSteamId = String(entry.steamId || (stats && stats.steam_id) || "").trim();
+      const playerNameNorm = normName(entry.name || (stats && stats.player_name) || "");
+      const playerPos = String((stats && stats.position) || entry.pos || slot.pos || "").toUpperCase().trim();
+      const isMvp = Boolean(
+        mvpKey && (
+          (mvpKey.steam && profileSteamId && mvpKey.steam === profileSteamId) ||
+          (mvpKey.name && playerNameNorm && mvpKey.name === playerNameNorm && (!mvpKey.pos || !playerPos || mvpKey.pos === playerPos))
+        )
+      );
+      const nameNode = profileSteamId
+        ? `<a class="pitch-player-name-link" href="player.html?steam_id=${encodeURIComponent(profileSteamId)}">${esc(truncateName(entry.name, 16))}</a>`
+        : esc(truncateName(entry.name, 16));
       return `
-        <div class="pitch-player" style="left:${slot.x}%;top:${slot.y}%;">
+        <div class="pitch-player ${isMvp ? "is-mvp" : ""}" style="left:${slot.x}%;top:${slot.y}%;">
           ${Number.isFinite(rating) ? `<div class="pitch-rating-chip">${esc(rating.toFixed(1))}</div>` : ""}
           <div class="pitch-jersey">${esc(entry.pos || slot.pos)}</div>
-          <div class="pitch-player-name">${esc(truncateName(entry.name, 16))}</div>
+          <div class="pitch-player-name">${isMvp ? '<span class="mvp-badge" title="MVP">🏆</span>' : ""}${nameNode}</div>
           ${playerStatChips(stats)}
+          ${playerHoverCardHtml(stats || entry, profileSteamId)}
         </div>
       `;
     }).join("");
@@ -540,8 +609,9 @@
 
   function mvpReason(player) {
     if (!player) return "No MVP data available for this match.";
-    if (Array.isArray(player.mvp_stats) && player.mvp_stats.length) {
-      return player.mvp_stats.join(" | ");
+    const mvpStats = normalizeMvpStats(player.mvp_stats || player.mvp_key_stats || player.stats);
+    if (mvpStats.length) {
+      return mvpStats.join(" | ");
     }
     const goals = Number(player.goals || 0);
     if (goals >= 3) return "Hat-trick performance.";
@@ -602,7 +672,7 @@
           </div>
           <div class="mvp-rating">${esc(rating.toFixed(1))}/10</div>
         </div>
-        <div class="mvp-name">${esc(playerName)}</div>
+        <div class="mvp-name"><span class="mvp-name-emoji">🏆</span>${esc(playerName)}</div>
         <div class="mvp-sub">${esc(position)}</div>
         <div class="mvp-reason">${esc(mvpReason(mvp))}</div>
         <div class="mvp-stats-grid">${statsHtml}</div>
@@ -639,6 +709,7 @@
       const homeLookup = buildStatsLookup(homeStats);
       const awayLookup = buildStatsLookup(awayStats);
       const mvp = resolveMvp(allStats, data.mvp || null);
+      const mvpKey = mvpIdentity(mvp);
 
       page.innerHTML = `
         <section class="match-panel">
@@ -679,15 +750,18 @@
 
           ${showDerived ? `
           <div class="match-events-wrap">
+            <div class="match-event-line">
+              <span><strong>Derived metrics:</strong> S/Sub/B = Started/Substitute/Bench, Clutch = decisive late actions, Sub impact = events right after substitutions.</span>
+            </div>
             <div class="match-events-grid">
               <div class="match-events">
-                <div class="match-event-line"><span><strong>${esc(match.home_team_name || "Home")}</strong></span></div>
+                <div class="match-event-line"><span><strong>${esc((match.home_team_name || "Home") + ((match.home_team_name || "") === (match.away_team_name || "") ? " (Home)" : ""))}</strong></span></div>
                 <div class="match-event-line"><span>S/Sub/B: ${esc(homeDerived.starts)}/${esc(homeDerived.subs)}/${esc(homeDerived.bench)}</span></div>
                 <div class="match-event-line"><span>Clutch: ${esc(homeDerived.clutch)} | Sub impact: ${esc(homeDerived.subImpactEvents)}</span></div>
                 <div class="match-event-line"><span>Sub G/OG: ${esc(homeDerived.subGoals)}/${esc(homeDerived.subOwnGoals)}</span></div>
               </div>
               <div class="match-events">
-                <div class="match-event-line"><span><strong>${esc(match.away_team_name || "Away")}</strong></span></div>
+                <div class="match-event-line"><span><strong>${esc((match.away_team_name || "Away") + ((match.home_team_name || "") === (match.away_team_name || "") ? " (Away)" : ""))}</strong></span></div>
                 <div class="match-event-line"><span>S/Sub/B: ${esc(awayDerived.starts)}/${esc(awayDerived.subs)}/${esc(awayDerived.bench)}</span></div>
                 <div class="match-event-line"><span>Clutch: ${esc(awayDerived.clutch)} | Sub impact: ${esc(awayDerived.subImpactEvents)}</span></div>
                 <div class="match-event-line"><span>Sub G/OG: ${esc(awayDerived.subGoals)}/${esc(awayDerived.subOwnGoals)}</span></div>
@@ -702,8 +776,8 @@
         ${mvpWidgetHtml(mvp)}
 
         <section class="lineup-pitches">
-          ${lineupCardHtml(match.home_team_name || "Home", match.home_team_icon, homeLineup, homeLookup, match.game_type)}
-          ${lineupCardHtml(match.away_team_name || "Away", match.away_team_icon, awayLineup, awayLookup, match.game_type)}
+          ${lineupCardHtml(match.home_team_name || "Home", match.home_team_icon, homeLineup, homeLookup, match.game_type, mvpKey)}
+          ${lineupCardHtml(match.away_team_name || "Away", match.away_team_icon, awayLineup, awayLookup, match.game_type, mvpKey)}
         </section>
       `;
     } catch (err) {
