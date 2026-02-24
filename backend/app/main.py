@@ -1644,7 +1644,17 @@ async def tournaments() -> dict[str, Any]:
                 t.created_at,
                 t.updated_at,
                 COALESCE(COUNT(DISTINCT tf.id), 0) AS fixtures_total,
-                COALESCE(COUNT(DISTINCT CASE WHEN tf.is_played THEN tf.id END), 0) AS fixtures_played,
+                COALESCE(
+                    COUNT(
+                        DISTINCT CASE
+                            WHEN COALESCE(tf.is_played, FALSE)
+                              OR COALESCE(tf.is_draw_home, FALSE)
+                              OR COALESCE(tf.is_draw_away, FALSE)
+                            THEN tf.id
+                        END
+                    ),
+                    0
+                ) AS fixtures_played,
                 COALESCE(COUNT(DISTINCT tm.id), 0) AS matches_linked
             FROM TOURNAMENTS t
             LEFT JOIN TOURNAMENT_FIXTURES tf ON tf.tournament_id = t.id
@@ -1699,6 +1709,26 @@ async def tournament_detail(tournament_id: int) -> dict[str, Any]:
                 JOIN MATCH_STATS m ON m.id = f.played_match_stats_id
                 WHERE f.tournament_id = $1
                   AND COALESCE(f.is_played, FALSE) = TRUE
+                  AND COALESCE(f.is_draw_home, FALSE) = FALSE
+                  AND COALESCE(f.is_draw_away, FALSE) = FALSE
+                  AND f.home_guild_id IS NOT NULL
+                  AND f.away_guild_id IS NOT NULL
+                  AND NOT EXISTS (
+                      SELECT 1 FROM forfeited_fixtures ff WHERE ff.fixture_id = f.id
+                  )
+            ),
+            manual_draw_fixtures AS (
+                SELECT
+                    f.home_guild_id AS home_id,
+                    f.away_guild_id AS away_id,
+                    COALESCE(f.is_draw_home, FALSE) AS home_draw,
+                    COALESCE(f.is_draw_away, FALSE) AS away_draw
+                FROM TOURNAMENT_FIXTURES f
+                WHERE f.tournament_id = $1
+                  AND (
+                      COALESCE(f.is_draw_home, FALSE) = TRUE
+                      OR COALESCE(f.is_draw_away, FALSE) = TRUE
+                  )
                   AND f.home_guild_id IS NOT NULL
                   AND f.away_guild_id IS NOT NULL
                   AND NOT EXISTS (
@@ -1717,6 +1747,23 @@ async def tournament_detail(tournament_id: int) -> dict[str, Any]:
                  AND f.played_match_stats_id = tm.match_stats_id
                 WHERE tm.tournament_id = $1
                   AND f.id IS NULL
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM TOURNAMENT_FIXTURES fx
+                      LEFT JOIN TOURNAMENT_FORFEITS tf
+                        ON tf.tournament_id = fx.tournament_id
+                       AND tf.fixture_id = fx.id
+                      WHERE fx.tournament_id = tm.tournament_id
+                        AND (
+                            (fx.home_guild_id = tm.home_guild_id AND fx.away_guild_id = tm.away_guild_id)
+                            OR (fx.home_guild_id = tm.away_guild_id AND fx.away_guild_id = tm.home_guild_id)
+                        )
+                        AND (
+                            tf.id IS NOT NULL
+                            OR COALESCE(fx.is_draw_home, FALSE)
+                            OR COALESCE(fx.is_draw_away, FALSE)
+                        )
+                  )
             ),
             forfeits AS (
                 SELECT
@@ -1734,7 +1781,7 @@ async def tournament_detail(tournament_id: int) -> dict[str, Any]:
                 UNION ALL
                 SELECT * FROM forfeits
             ),
-            team_rows AS (
+            match_team_rows AS (
                 SELECT
                     home_id AS guild_id,
                     1 AS matches_played,
@@ -1754,6 +1801,32 @@ async def tournament_detail(tournament_id: int) -> dict[str, Any]:
                     away_score AS goals_for,
                     home_score AS goals_against
                 FROM all_matches
+            ),
+            manual_draw_team_rows AS (
+                SELECT
+                    home_id AS guild_id,
+                    CASE WHEN home_draw THEN 1 ELSE 0 END AS matches_played,
+                    0 AS wins,
+                    CASE WHEN home_draw THEN 1 ELSE 0 END AS draws,
+                    0 AS losses,
+                    0 AS goals_for,
+                    0 AS goals_against
+                FROM manual_draw_fixtures
+                UNION ALL
+                SELECT
+                    away_id AS guild_id,
+                    CASE WHEN away_draw THEN 1 ELSE 0 END AS matches_played,
+                    0 AS wins,
+                    CASE WHEN away_draw THEN 1 ELSE 0 END AS draws,
+                    0 AS losses,
+                    0 AS goals_for,
+                    0 AS goals_against
+                FROM manual_draw_fixtures
+            ),
+            team_rows AS (
+                SELECT * FROM match_team_rows
+                UNION ALL
+                SELECT * FROM manual_draw_team_rows
             ),
             agg AS (
                 SELECT
@@ -1807,37 +1880,43 @@ async def tournament_detail(tournament_id: int) -> dict[str, Any]:
                 f.week_label,
                 f.is_active,
                 f.is_played,
+                COALESCE(f.is_draw_home, FALSE) AS is_draw_home,
+                COALESCE(f.is_draw_away, FALSE) AS is_draw_away,
                 f.played_match_stats_id,
                 f.played_at,
                 f.home_guild_id,
                 f.away_guild_id,
                 CASE
+                    WHEN COALESCE(f.is_draw_home, FALSE) OR COALESCE(f.is_draw_away, FALSE) THEN 0::int
                     WHEN tf.id IS NOT NULL THEN
                         CASE
                             WHEN tf.winner_guild_id = f.home_guild_id THEN COALESCE(tf.score_forfeit, 10)::int
                             WHEN tf.forfeiting_guild_id = f.home_guild_id THEN 0::int
                             ELSE COALESCE(m.home_score, 0)::int
                         END
-                    ELSE
+                    WHEN m.id IS NOT NULL THEN
                         CASE
                             WHEN m.home_guild_id = f.home_guild_id AND m.away_guild_id = f.away_guild_id THEN COALESCE(m.home_score, 0)::int
                             WHEN m.home_guild_id = f.away_guild_id AND m.away_guild_id = f.home_guild_id THEN COALESCE(m.away_score, 0)::int
                             ELSE COALESCE(m.home_score, 0)::int
                         END
+                    ELSE NULL::int
                 END AS home_score,
                 CASE
+                    WHEN COALESCE(f.is_draw_home, FALSE) OR COALESCE(f.is_draw_away, FALSE) THEN 0::int
                     WHEN tf.id IS NOT NULL THEN
                         CASE
                             WHEN tf.winner_guild_id = f.away_guild_id THEN COALESCE(tf.score_forfeit, 10)::int
                             WHEN tf.forfeiting_guild_id = f.away_guild_id THEN 0::int
                             ELSE COALESCE(m.away_score, 0)::int
                         END
-                    ELSE
+                    WHEN m.id IS NOT NULL THEN
                         CASE
                             WHEN m.home_guild_id = f.home_guild_id AND m.away_guild_id = f.away_guild_id THEN COALESCE(m.away_score, 0)::int
                             WHEN m.home_guild_id = f.away_guild_id AND m.away_guild_id = f.home_guild_id THEN COALESCE(m.home_score, 0)::int
                             ELSE COALESCE(m.away_score, 0)::int
                         END
+                    ELSE NULL::int
                 END AS away_score,
                 m.datetime AS match_datetime,
                 (tf.id IS NOT NULL) AS is_forfeit,
@@ -2116,6 +2195,23 @@ async def tournament_detail(tournament_id: int) -> dict[str, Any]:
             LEFT JOIN IOSCA_TEAMS at ON at.guild_id = tm.away_guild_id
             WHERE tm.tournament_id = $1
               AND f.id IS NULL
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM TOURNAMENT_FIXTURES fx
+                  LEFT JOIN TOURNAMENT_FORFEITS tf
+                    ON tf.tournament_id = fx.tournament_id
+                   AND tf.fixture_id = fx.id
+                  WHERE fx.tournament_id = tm.tournament_id
+                    AND (
+                        (fx.home_guild_id = tm.home_guild_id AND fx.away_guild_id = tm.away_guild_id)
+                        OR (fx.home_guild_id = tm.away_guild_id AND fx.away_guild_id = tm.home_guild_id)
+                    )
+                    AND (
+                        tf.id IS NOT NULL
+                        OR COALESCE(fx.is_draw_home, FALSE)
+                        OR COALESCE(fx.is_draw_away, FALSE)
+                    )
+              )
             """,
             tournament_id,
         )
@@ -2148,7 +2244,9 @@ async def tournament_detail(tournament_id: int) -> dict[str, Any]:
 
     played_fixtures: list[Any] = []
     for fixture in fixtures:
-        if not fixture.get("is_played"):
+        is_draw_fixture = bool(fixture.get("is_draw_home") or fixture.get("is_draw_away"))
+        is_forfeit_fixture = bool(fixture.get("is_forfeit"))
+        if not fixture.get("is_played") and not is_draw_fixture and not is_forfeit_fixture:
             continue
         if fixture.get("home_score") is None or fixture.get("away_score") is None:
             continue
