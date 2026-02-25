@@ -54,11 +54,11 @@ async def _fetch_recent_matches(conn: asyncpg.Connection, limit: int) -> list[di
         LEFT JOIN IOSCA_TEAMS ht ON ht.guild_id = m.home_guild_id
         LEFT JOIN IOSCA_TEAMS at ON at.guild_id = m.away_guild_id
         LEFT JOIN LATERAL (
-            SELECT tm.tournament_id, t.name AS tournament_name
-            FROM TOURNAMENT_MATCHES tm
-            JOIN TOURNAMENTS t ON t.id = tm.tournament_id
-            WHERE tm.match_stats_id = m.id
-            ORDER BY tm.id DESC
+            SELECT f.tournament_id, t.name AS tournament_name
+            FROM TOURNAMENT_FIXTURES f
+            JOIN TOURNAMENTS t ON t.id = f.tournament_id
+            WHERE f.played_match_stats_id = m.id
+            ORDER BY COALESCE(f.played_at, f.updated_at, f.created_at) DESC, f.id DESC
             LIMIT 1
         ) AS tmeta ON TRUE
         ORDER BY m.datetime DESC
@@ -165,47 +165,91 @@ async def _fetch_tournaments(conn: asyncpg.Connection) -> list[dict]:
                 LEFT JOIN IOSCA_TEAMS it ON it.guild_id = tt.guild_id
                 WHERE tt.tournament_id = $1
             ),
-            forfeited_fixtures AS (
-                SELECT fixture_id
-                FROM TOURNAMENT_FORFEITS
-                WHERE tournament_id = $1
-                  AND fixture_id IS NOT NULL
+            fixture_base AS (
+                SELECT
+                    f.id,
+                    f.home_guild_id,
+                    f.away_guild_id,
+                    COALESCE(ht.guild_name, f.home_name_raw, '') AS home_name,
+                    COALESCE(at.guild_name, f.away_name_raw, '') AS away_name,
+                    f.played_match_stats_id,
+                    COALESCE(f.is_draw_home, FALSE) AS is_draw_home,
+                    COALESCE(f.is_draw_away, FALSE) AS is_draw_away,
+                    COALESCE(f.is_forfeit_home, FALSE) AS is_forfeit_home,
+                    COALESCE(f.is_forfeit_away, FALSE) AS is_forfeit_away,
+                    COALESCE(f.forfeit_score, 10)::int AS forfeit_score
+                FROM TOURNAMENT_FIXTURES f
+                LEFT JOIN IOSCA_TEAMS ht ON ht.guild_id = f.home_guild_id
+                LEFT JOIN IOSCA_TEAMS at ON at.guild_id = f.away_guild_id
+                WHERE f.tournament_id = $1
+                  AND f.home_guild_id IS NOT NULL
+                  AND f.away_guild_id IS NOT NULL
+                  AND (
+                        COALESCE(f.is_played, FALSE) = TRUE
+                     OR f.played_match_stats_id IS NOT NULL
+                     OR COALESCE(f.is_draw_home, FALSE) = TRUE
+                     OR COALESCE(f.is_draw_away, FALSE) = TRUE
+                     OR COALESCE(f.is_forfeit_home, FALSE) = TRUE
+                     OR COALESCE(f.is_forfeit_away, FALSE) = TRUE
+                  )
             ),
             played_matches AS (
                 SELECT
-                    f.home_guild_id AS home_id,
-                    f.away_guild_id AS away_id,
+                    fb.home_guild_id AS home_id,
+                    fb.away_guild_id AS away_id,
                     CASE
-                        WHEN m.home_guild_id = f.home_guild_id AND m.away_guild_id = f.away_guild_id THEN COALESCE(m.home_score, 0)::int
-                        WHEN m.home_guild_id = f.away_guild_id AND m.away_guild_id = f.home_guild_id THEN COALESCE(m.away_score, 0)::int
+                        WHEN m.home_guild_id = fb.home_guild_id THEN COALESCE(m.home_score, 0)::int
+                        WHEN m.away_guild_id = fb.home_guild_id THEN COALESCE(m.away_score, 0)::int
+                        WHEN regexp_replace(lower(COALESCE(m.home_team_name, '')), '[^a-z0-9]+', '', 'g')
+                           = regexp_replace(lower(COALESCE(fb.home_name, '')), '[^a-z0-9]+', '', 'g')
+                        THEN COALESCE(m.home_score, 0)::int
+                        WHEN regexp_replace(lower(COALESCE(m.away_team_name, '')), '[^a-z0-9]+', '', 'g')
+                           = regexp_replace(lower(COALESCE(fb.home_name, '')), '[^a-z0-9]+', '', 'g')
+                        THEN COALESCE(m.away_score, 0)::int
                         ELSE COALESCE(m.home_score, 0)::int
                     END AS home_score,
                     CASE
-                        WHEN m.home_guild_id = f.home_guild_id AND m.away_guild_id = f.away_guild_id THEN COALESCE(m.away_score, 0)::int
-                        WHEN m.home_guild_id = f.away_guild_id AND m.away_guild_id = f.home_guild_id THEN COALESCE(m.home_score, 0)::int
+                        WHEN m.home_guild_id = fb.away_guild_id THEN COALESCE(m.home_score, 0)::int
+                        WHEN m.away_guild_id = fb.away_guild_id THEN COALESCE(m.away_score, 0)::int
+                        WHEN regexp_replace(lower(COALESCE(m.home_team_name, '')), '[^a-z0-9]+', '', 'g')
+                           = regexp_replace(lower(COALESCE(fb.away_name, '')), '[^a-z0-9]+', '', 'g')
+                        THEN COALESCE(m.home_score, 0)::int
+                        WHEN regexp_replace(lower(COALESCE(m.away_team_name, '')), '[^a-z0-9]+', '', 'g')
+                           = regexp_replace(lower(COALESCE(fb.away_name, '')), '[^a-z0-9]+', '', 'g')
+                        THEN COALESCE(m.away_score, 0)::int
                         ELSE COALESCE(m.away_score, 0)::int
                     END AS away_score
-                FROM TOURNAMENT_FIXTURES f
-                JOIN MATCH_STATS m ON m.id = f.played_match_stats_id
-                WHERE f.tournament_id = $1
-                  AND COALESCE(f.is_played, FALSE) = TRUE
-                  AND f.home_guild_id IS NOT NULL
-                  AND f.away_guild_id IS NOT NULL
-                  AND NOT EXISTS (
-                      SELECT 1 FROM forfeited_fixtures ff WHERE ff.fixture_id = f.id
-                  )
+                FROM fixture_base fb
+                JOIN MATCH_STATS m ON m.id = fb.played_match_stats_id
+                WHERE COALESCE(fb.is_draw_home, FALSE) = FALSE
+                  AND COALESCE(fb.is_draw_away, FALSE) = FALSE
+                  AND COALESCE(fb.is_forfeit_home, FALSE) = FALSE
+                  AND COALESCE(fb.is_forfeit_away, FALSE) = FALSE
+            ),
+            draw_matches AS (
+                SELECT
+                    fb.home_guild_id AS home_id,
+                    fb.away_guild_id AS away_id,
+                    0::int AS home_score,
+                    0::int AS away_score
+                FROM fixture_base fb
+                WHERE COALESCE(fb.is_draw_home, FALSE) = TRUE
+                  AND COALESCE(fb.is_draw_away, FALSE) = TRUE
             ),
             forfeits AS (
                 SELECT
-                    tf.winner_guild_id AS home_id,
-                    tf.forfeiting_guild_id AS away_id,
-                    COALESCE(tf.score_forfeit, 10)::int AS home_score,
-                    0::int AS away_score
-                FROM TOURNAMENT_FORFEITS tf
-                WHERE tf.tournament_id = $1
+                    fb.home_guild_id AS home_id,
+                    fb.away_guild_id AS away_id,
+                    CASE WHEN COALESCE(fb.is_forfeit_home, FALSE) THEN 0::int ELSE fb.forfeit_score END AS home_score,
+                    CASE WHEN COALESCE(fb.is_forfeit_away, FALSE) THEN 0::int ELSE fb.forfeit_score END AS away_score
+                FROM fixture_base fb
+                WHERE COALESCE(fb.is_forfeit_home, FALSE) = TRUE
+                   OR COALESCE(fb.is_forfeit_away, FALSE) = TRUE
             ),
             all_matches AS (
                 SELECT * FROM played_matches
+                UNION ALL
+                SELECT * FROM draw_matches
                 UNION ALL
                 SELECT * FROM forfeits
             ),
@@ -331,11 +375,14 @@ async def _fetch_tournaments(conn: asyncpg.Connection) -> list[dict]:
                 COALESCE(at.guild_icon, '') AS away_team_icon,
                 m.home_score,
                 m.away_score
-            FROM TOURNAMENT_MATCHES tm
-            JOIN MATCH_STATS m ON m.id = tm.match_stats_id
+            FROM TOURNAMENT_FIXTURES f
+            JOIN MATCH_STATS m ON m.id = f.played_match_stats_id
             LEFT JOIN IOSCA_TEAMS ht ON ht.guild_id = m.home_guild_id
             LEFT JOIN IOSCA_TEAMS at ON at.guild_id = m.away_guild_id
-            WHERE tm.tournament_id = $1
+            WHERE f.tournament_id = $1
+              AND f.played_match_stats_id IS NOT NULL
+              AND COALESCE(f.is_forfeit_home, FALSE) = FALSE
+              AND COALESCE(f.is_forfeit_away, FALSE) = FALSE
             ORDER BY m.datetime DESC
             LIMIT 10
             """,
