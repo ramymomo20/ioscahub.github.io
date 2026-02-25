@@ -1230,7 +1230,7 @@ async def player_detail(steam_id: str) -> dict[str, Any]:
                 FROM TOURNAMENT_FIXTURES f
                 JOIN TOURNAMENTS t ON t.id = f.tournament_id
                 WHERE f.played_match_stats_id = ms.id
-                ORDER BY COALESCE(f.played_at, f.updated_at, f.created_at) DESC, f.id DESC
+                ORDER BY f.id DESC
                 LIMIT 1
             ) AS tmeta ON TRUE
             WHERE pmd.steam_id = ANY($1::text[])
@@ -1464,7 +1464,7 @@ async def matches(limit: int = Query(default=250, ge=1, le=3000)) -> dict[str, A
                 FROM TOURNAMENT_FIXTURES f
                 JOIN TOURNAMENTS t ON t.id = f.tournament_id
                 WHERE f.played_match_stats_id = m.id
-                ORDER BY COALESCE(f.played_at, f.updated_at, f.created_at) DESC, f.id DESC
+                ORDER BY f.id DESC
                 LIMIT 1
             ) AS tmeta ON TRUE
             ORDER BY m.datetime DESC
@@ -1500,7 +1500,7 @@ async def match_detail(match_id: str) -> dict[str, Any]:
                 FROM TOURNAMENT_FIXTURES f
                 JOIN TOURNAMENTS t ON t.id = f.tournament_id
                 WHERE f.played_match_stats_id = m.id
-                ORDER BY COALESCE(f.played_at, f.updated_at, f.created_at) DESC, f.id DESC
+                ORDER BY f.id DESC
                 LIMIT 1
             ) AS tmeta ON TRUE
             WHERE m.id::text = $1 OR m.match_id::text = $1
@@ -2459,7 +2459,7 @@ async def team_detail(guild_id: str) -> dict[str, Any]:
                     FROM TOURNAMENT_FIXTURES f
                     JOIN TOURNAMENTS t ON t.id = f.tournament_id
                     WHERE f.played_match_stats_id = m.id
-                    ORDER BY COALESCE(f.played_at, f.updated_at, f.created_at) DESC, f.id DESC
+                    ORDER BY f.id DESC
                     LIMIT 1
                 ) AS tmeta ON TRUE
                 WHERE m.home_guild_id::text = $1 OR m.away_guild_id::text = $1

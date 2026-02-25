@@ -58,7 +58,7 @@ async def _fetch_recent_matches(conn: asyncpg.Connection, limit: int) -> list[di
             FROM TOURNAMENT_FIXTURES f
             JOIN TOURNAMENTS t ON t.id = f.tournament_id
             WHERE f.played_match_stats_id = m.id
-            ORDER BY COALESCE(f.played_at, f.updated_at, f.created_at) DESC, f.id DESC
+            ORDER BY f.id DESC
             LIMIT 1
         ) AS tmeta ON TRUE
         ORDER BY m.datetime DESC
