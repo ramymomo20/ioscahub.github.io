@@ -748,30 +748,29 @@
           </div>
           ` : ""}
 
-          ${showDerived ? `
-          <div class="match-events-wrap">
-            <div class="match-event-line">
-              <span><strong>Derived metrics:</strong> S/Sub/B = Started/Substitute/Bench, Clutch = decisive late actions, Sub impact = events right after substitutions.</span>
-            </div>
-            <div class="match-events-grid">
-              <div class="match-events">
-                <div class="match-event-line"><span><strong>${esc((match.home_team_name || "Home") + ((match.home_team_name || "") === (match.away_team_name || "") ? " (Home)" : ""))}</strong></span></div>
-                <div class="match-event-line"><span>S/Sub/B: ${esc(homeDerived.starts)}/${esc(homeDerived.subs)}/${esc(homeDerived.bench)}</span></div>
-                <div class="match-event-line"><span>Clutch: ${esc(homeDerived.clutch)} | Sub impact: ${esc(homeDerived.subImpactEvents)}</span></div>
-                <div class="match-event-line"><span>Sub G/OG: ${esc(homeDerived.subGoals)}/${esc(homeDerived.subOwnGoals)}</span></div>
-              </div>
-              <div class="match-events">
-                <div class="match-event-line"><span><strong>${esc((match.away_team_name || "Away") + ((match.home_team_name || "") === (match.away_team_name || "") ? " (Away)" : ""))}</strong></span></div>
-                <div class="match-event-line"><span>S/Sub/B: ${esc(awayDerived.starts)}/${esc(awayDerived.subs)}/${esc(awayDerived.bench)}</span></div>
-                <div class="match-event-line"><span>Clutch: ${esc(awayDerived.clutch)} | Sub impact: ${esc(awayDerived.subImpactEvents)}</span></div>
-                <div class="match-event-line"><span>Sub G/OG: ${esc(awayDerived.subGoals)}/${esc(awayDerived.subOwnGoals)}</span></div>
-              </div>
-            </div>
-          </div>
-          ` : ""}
-
           <div class="match-bottom-meta">${esc(matchDate)}</div>
         </section>
+
+        ${showDerived ? `
+        <section class="derived-widget">
+          <div class="derived-title">Derived Metrics</div>
+          <div class="derived-subtitle">S/Sub/B = Started/Substitute/Bench, Clutch = decisive late actions, Sub impact = events right after substitutions.</div>
+          <div class="match-events-grid">
+            <div class="match-events">
+              <div class="match-event-line"><span><strong>${esc((match.home_team_name || "Home") + ((match.home_team_name || "") === (match.away_team_name || "") ? " (Home)" : ""))}</strong></span></div>
+              <div class="match-event-line"><span>S/Sub/B: ${esc(homeDerived.starts)}/${esc(homeDerived.subs)}/${esc(homeDerived.bench)}</span></div>
+              <div class="match-event-line"><span>Clutch: ${esc(homeDerived.clutch)} | Sub impact: ${esc(homeDerived.subImpactEvents)}</span></div>
+              <div class="match-event-line"><span>Sub G/OG: ${esc(homeDerived.subGoals)}/${esc(homeDerived.subOwnGoals)}</span></div>
+            </div>
+            <div class="match-events">
+              <div class="match-event-line"><span><strong>${esc((match.away_team_name || "Away") + ((match.home_team_name || "") === (match.away_team_name || "") ? " (Away)" : ""))}</strong></span></div>
+              <div class="match-event-line"><span>S/Sub/B: ${esc(awayDerived.starts)}/${esc(awayDerived.subs)}/${esc(awayDerived.bench)}</span></div>
+              <div class="match-event-line"><span>Clutch: ${esc(awayDerived.clutch)} | Sub impact: ${esc(awayDerived.subImpactEvents)}</span></div>
+              <div class="match-event-line"><span>Sub G/OG: ${esc(awayDerived.subGoals)}/${esc(awayDerived.subOwnGoals)}</span></div>
+            </div>
+          </div>
+        </section>
+        ` : ""}
 
         ${mvpWidgetHtml(mvp)}
 

@@ -134,14 +134,18 @@
         <h3>Fixtures</h3>
         <div class="list">
           ${fixtures.length ? fixtures.map((f) => {
-            const status = f.is_played ? "Played" : (f.is_active ? "Pending" : "Closed");
-            const matchLink = f.played_match_stats_id ? `<a href="match.html?id=${esc(f.played_match_stats_id)}">View match</a>` : "";
+            const hasLinkedMatch = Boolean(f.played_match_stats_id);
+            const isDraw = Boolean(f.is_draw_home || f.is_draw_away);
+            const isForfeit = Boolean(f.is_forfeit);
+            const isPlayed = Boolean(f.is_played || hasLinkedMatch || isDraw || isForfeit);
+            const status = isPlayed ? "Played" : (f.is_active ? "Pending" : "Closed");
+            const matchLink = hasLinkedMatch ? `<a href="match.html?id=${esc(f.played_match_stats_id)}">View match</a>` : "";
             const homeScore = Number(f.home_score ?? 0);
             const awayScore = Number(f.away_score ?? 0);
-            const scoreText = f.is_played ? `${esc(homeScore)} - ${esc(awayScore)}` : "TBD";
+            const scoreText = isPlayed ? `${esc(homeScore)} - ${esc(awayScore)}` : "TBD";
             let homeResult = "-";
             let awayResult = "-";
-            if (f.is_played && Number.isFinite(homeScore) && Number.isFinite(awayScore)) {
+            if (isPlayed && Number.isFinite(homeScore) && Number.isFinite(awayScore)) {
               if (homeScore > awayScore) {
                 homeResult = "W";
                 awayResult = "L";
@@ -153,11 +157,12 @@
                 awayResult = "D";
               }
             }
+            const playedTime = f.played_at || f.match_datetime || null;
             return `
               <div class="item">
                 <div><strong>${esc(f.week_label || `Week ${f.week_number || ""}`)}</strong> | ${esc(status)}</div>
                 <div>${esc(f.home_team_name)} (${esc(homeResult)}) ${scoreText} (${esc(awayResult)}) ${esc(f.away_team_name)}${f.is_forfeit ? ' <span class="badge">FORFEIT</span>' : ''}</div>
-                <div class="meta">${f.played_at ? fmtDateTime(f.played_at) : "Not played yet"} ${matchLink ? "| " + matchLink : ""}</div>
+                <div class="meta">${playedTime ? fmtDateTime(playedTime) : (isPlayed ? "Played" : "Not played yet")} ${matchLink ? "| " + matchLink : ""}</div>
               </div>
             `;
           }).join("") : '<div class="empty">No fixtures</div>'}
