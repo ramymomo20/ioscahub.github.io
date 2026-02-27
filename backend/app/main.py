@@ -961,6 +961,13 @@ async def rankings(limit: int = Query(default=200, ge=1, le=2000)) -> dict[str, 
               AND p.rating IS NOT NULL
               AND p.rating::text <> 'NaN'
               AND lp.position <> 'UNKNOWN'
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM IOSCA_PLAYERS owner
+                  JOIN LATERAL jsonb_array_elements_text(COALESCE(owner.linked_steam_ids, '[]'::jsonb)) AS linked(value) ON TRUE
+                  WHERE lower(trim(linked.value)) = lower(trim(p.steam_id::text))
+                    AND lower(trim(owner.steam_id::text)) <> lower(trim(p.steam_id::text))
+              )
             ORDER BY p.rating DESC NULLS LAST, p.discord_name ASC
             LIMIT $1
             """,
@@ -1024,6 +1031,13 @@ async def players(limit: int = Query(default=500, ge=1, le=5000)) -> dict[str, A
             WHERE p.discord_id IS NOT NULL
               AND p.rating IS NOT NULL
               AND p.rating::text <> 'NaN'
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM IOSCA_PLAYERS owner
+                  JOIN LATERAL jsonb_array_elements_text(COALESCE(owner.linked_steam_ids, '[]'::jsonb)) AS linked(value) ON TRUE
+                  WHERE lower(trim(linked.value)) = lower(trim(p.steam_id::text))
+                    AND lower(trim(owner.steam_id::text)) <> lower(trim(p.steam_id::text))
+              )
             ORDER BY p.rating DESC NULLS LAST, p.discord_name ASC
             LIMIT $1
             """,
