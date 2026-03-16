@@ -10,7 +10,7 @@
     page.innerHTML = `
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Name</th><th>Status</th><th>Format</th><th>Teams</th><th>Fixtures</th><th>Updated</th></tr></thead>
+          <thead><tr><th>Name</th><th>Status</th><th>Format</th><th>Teams</th><th>Leagues</th><th>Fixtures</th><th>Updated</th></tr></thead>
           <tbody>
             ${rows.map((t) => `
               <tr>
@@ -18,6 +18,7 @@
                 <td>${esc(t.status)}</td>
                 <td>${esc(t.format)}</td>
                 <td>${esc(t.num_teams)}</td>
+                <td>${esc(t.league_count || 1)}</td>
                 <td>${esc(t.fixtures_played || 0)}/${esc(t.fixtures_total || 0)}</td>
                 <td>${fmtDateTime(t.updated_at)}</td>
               </tr>

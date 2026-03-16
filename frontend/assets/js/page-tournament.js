@@ -58,6 +58,14 @@
     `;
   }
 
+  function normalizeLeagueKey(value) {
+    return String(value || "").trim().toUpperCase() === "B" ? "B" : "A";
+  }
+
+  function leagueLabel(value) {
+    return `League ${normalizeLeagueKey(value)}`;
+  }
+
   try {
     const data = await window.HubApi.tournament(id);
     const t = data.tournament || {};
@@ -66,13 +74,22 @@
     const teams = data.teams || [];
     const teamForms = data.team_forms || {};
     const leaders = data.leaders || {};
+    const leagues = Array.isArray(data.leagues) && data.leagues.length
+      ? data.leagues
+      : [{
+          league_key: "A",
+          league_name: "League A",
+          standings,
+          fixtures,
+          teams,
+        }];
 
     page.innerHTML = `
       <div class="grid cols-4">
         <div class="stat"><div class="label">Tournament</div><div class="value" style="font-size:1.2rem;">${esc(t.name || "")}</div></div>
         <div class="stat"><div class="label">Status</div><div class="value" style="font-size:1.2rem;">${esc(t.status || "")}</div></div>
         <div class="stat"><div class="label">Format</div><div class="value" style="font-size:1.2rem;">${esc(t.format || "")}</div></div>
-        <div class="stat"><div class="label">Teams</div><div class="value" style="font-size:1.2rem;">${esc(t.num_teams || 0)}</div></div>
+        <div class="stat"><div class="label">Teams / Leagues</div><div class="value" style="font-size:1.2rem;">${esc(t.num_teams || 0)} / ${esc(t.league_count || leagues.length || 1)}</div></div>
       </div>
 
       <div class="leader-grid" style="margin-top:10px;">
@@ -87,53 +104,66 @@
       <div class="grid tournament-detail-grid" style="margin-top:10px;">
         <div class="card tournament-standings-card" style="margin:0;">
           <h3>Standings</h3>
-          <div class="table-wrap">
-            <table>
-              <thead><tr><th>#</th><th>Team</th><th>Form</th><th>MP</th><th>W</th><th>D</th><th>L</th><th>GF</th><th>GA</th><th>GD</th><th>PTS</th></tr></thead>
-              <tbody>
-                ${standings.map((s, idx) => `
-                  <tr>
-                    <td>${idx + 1}</td>
-                    <td>
-                      <span class="cell-inline">
-                        ${s.team_icon ? `<img class="logo" src="${esc(s.team_icon)}" alt="logo">` : ""}
-                        <a href="team.html?id=${esc(s.guild_id)}">${esc(s.team_name)}</a>
-                      </span>
-                    </td>
-                    <td>${renderForm(teamForms, s.guild_id)}</td>
-                    <td>${esc(s.matches_played)}</td>
-                    <td>${esc(s.wins)}</td>
-                    <td>${esc(s.draws)}</td>
-                    <td>${esc(s.losses)}</td>
-                    <td>${esc(s.goals_for)}</td>
-                    <td>${esc(s.goals_against)}</td>
-                    <td>${esc(s.goal_diff)}</td>
-                    <td>${esc(s.points)}</td>
-                  </tr>
-                `).join("")}
-              </tbody>
-            </table>
-          </div>
+          ${leagues.map((league) => `
+            <div style="margin-top:12px;">
+              ${leagues.length > 1 ? `<h4>${esc(league.league_name || leagueLabel(league.league_key))}</h4>` : ""}
+              <div class="table-wrap">
+                <table>
+                  <thead><tr><th>#</th><th>Team</th><th>Form</th><th>MP</th><th>W</th><th>D</th><th>L</th><th>GF</th><th>GA</th><th>GD</th><th>PTS</th></tr></thead>
+                  <tbody>
+                    ${(league.standings || []).map((s, idx) => `
+                      <tr>
+                        <td>${idx + 1}</td>
+                        <td>
+                          <span class="cell-inline">
+                            ${s.team_icon ? `<img class="logo" src="${esc(s.team_icon)}" alt="logo">` : ""}
+                            <a href="team.html?id=${esc(s.guild_id)}">${esc(s.team_name)}</a>
+                          </span>
+                        </td>
+                        <td>${renderForm(teamForms, s.guild_id)}</td>
+                        <td>${esc(s.matches_played)}</td>
+                        <td>${esc(s.wins)}</td>
+                        <td>${esc(s.draws)}</td>
+                        <td>${esc(s.losses)}</td>
+                        <td>${esc(s.goals_for)}</td>
+                        <td>${esc(s.goals_against)}</td>
+                        <td>${esc(s.goal_diff)}</td>
+                        <td>${esc(s.points)}</td>
+                      </tr>
+                    `).join("") || '<tr><td colspan="11" class="meta">No standings yet.</td></tr>'}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          `).join("")}
         </div>
 
         <div class="card tournament-teams-card" style="margin:0;">
           <h3>Teams in tournament</h3>
-          <div class="list">
-            ${teams.length ? teams.map((team) => `
-              <div class="item">
-                <div><a href="team.html?id=${esc(team.guild_id)}">${esc(team.team_name)}</a></div>
-                <div class="meta">Captain: ${esc(team.captain_name || "N/A")}</div>
-                <div class="meta">Last 5: ${renderForm(teamForms, team.guild_id)}</div>
+          ${leagues.map((league) => `
+            <div style="margin-top:12px;">
+              ${leagues.length > 1 ? `<h4>${esc(league.league_name || leagueLabel(league.league_key))}</h4>` : ""}
+              <div class="list">
+                ${(league.teams || []).length ? (league.teams || []).map((team) => `
+                  <div class="item">
+                    <div><a href="team.html?id=${esc(team.guild_id)}">${esc(team.team_name)}</a></div>
+                    <div class="meta">Captain: ${esc(team.captain_name || "N/A")}</div>
+                    <div class="meta">Last 5: ${renderForm(teamForms, team.guild_id)}</div>
+                  </div>
+                `).join("") : '<div class="empty">No teams linked.</div>'}
               </div>
-            `).join("") : '<div class="empty">No teams linked.</div>'}
-          </div>
+            </div>
+          `).join("")}
         </div>
       </div>
 
       <div class="card" style="margin-top:10px;">
         <h3>Fixtures</h3>
-        <div class="list">
-          ${fixtures.length ? fixtures.map((f) => {
+        ${leagues.map((league) => `
+          <div style="margin-top:12px;">
+            ${leagues.length > 1 ? `<h4>${esc(league.league_name || leagueLabel(league.league_key))}</h4>` : ""}
+            <div class="list">
+          ${(league.fixtures || []).length ? (league.fixtures || []).map((f) => {
             const hasLinkedMatch = Boolean(f.played_match_stats_id);
             const isDraw = Boolean(f.is_draw_home || f.is_draw_away);
             const isForfeit = Boolean(f.is_forfeit);
@@ -166,7 +196,9 @@
               </div>
             `;
           }).join("") : '<div class="empty">No fixtures</div>'}
-        </div>
+            </div>
+          </div>
+        `).join("")}
       </div>
     `;
   } catch (err) {

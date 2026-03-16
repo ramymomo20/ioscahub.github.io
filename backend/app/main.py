@@ -90,6 +90,59 @@ def _record_to_dict(row: Any) -> dict[str, Any]:
     return payload
 
 
+def _normalize_tournament_league_key(value: Any) -> str:
+    raw = str(value or "").strip().upper()
+    if raw in ("B", "2"):
+        return "B"
+    return "A"
+
+
+def _tournament_league_label(value: Any) -> str:
+    return f"League {_normalize_tournament_league_key(value)}"
+
+
+async def _ensure_tournament_league_schema(conn: Any) -> None:
+    await conn.execute(
+        """
+        ALTER TABLE TOURNAMENTS
+        ADD COLUMN IF NOT EXISTS league_count INTEGER NOT NULL DEFAULT 1
+        """
+    )
+    await conn.execute(
+        """
+        UPDATE TOURNAMENTS
+        SET league_count = 1
+        WHERE league_count IS NULL OR league_count NOT IN (1, 2)
+        """
+    )
+    await conn.execute(
+        """
+        ALTER TABLE TOURNAMENT_TEAMS
+        ADD COLUMN IF NOT EXISTS league_key VARCHAR(1) NOT NULL DEFAULT 'A'
+        """
+    )
+    await conn.execute(
+        """
+        UPDATE TOURNAMENT_TEAMS
+        SET league_key = 'A'
+        WHERE league_key IS NULL OR league_key NOT IN ('A', 'B')
+        """
+    )
+    await conn.execute(
+        """
+        ALTER TABLE TOURNAMENT_FIXTURES
+        ADD COLUMN IF NOT EXISTS league_key VARCHAR(1) NOT NULL DEFAULT 'A'
+        """
+    )
+    await conn.execute(
+        """
+        UPDATE TOURNAMENT_FIXTURES
+        SET league_key = 'A'
+        WHERE league_key IS NULL OR league_key NOT IN ('A', 'B')
+        """
+    )
+
+
 def _safe_minutes(values: Any) -> list[int]:
     if isinstance(values, (int, float, str)):
         values = [values]
@@ -1665,6 +1718,7 @@ async def match_detail_query(id: str = Query(..., min_length=1)) -> dict[str, An
 @app.get("/api/tournaments")
 async def tournaments() -> dict[str, Any]:
     async with db.acquire() as conn:
+        await _ensure_tournament_league_schema(conn)
         rows = await conn.fetch(
             """
             SELECT
@@ -1673,6 +1727,7 @@ async def tournaments() -> dict[str, Any]:
                 t.format,
                 t.status,
                 t.num_teams,
+                t.league_count,
                 t.created_at,
                 t.updated_at,
                 COALESCE(COUNT(DISTINCT tf.id), 0) AS fixtures_total,
@@ -1710,6 +1765,7 @@ async def tournaments() -> dict[str, Any]:
 async def tournament_detail(tournament_id: int) -> dict[str, Any]:
     orphan_form_rows: list[dict[str, Any]] = []
     async with db.acquire() as conn:
+        await _ensure_tournament_league_schema(conn)
         tournament = await conn.fetchrow("SELECT * FROM TOURNAMENTS WHERE id = $1", tournament_id)
         if not tournament:
             raise HTTPException(status_code=404, detail="Tournament not found")
@@ -1719,6 +1775,7 @@ async def tournament_detail(tournament_id: int) -> dict[str, Any]:
             WITH teams AS (
                 SELECT
                     tt.guild_id,
+                    COALESCE(tt.league_key, 'A') AS league_key,
                     COALESCE(tt.team_name_snapshot, it.guild_name, CONCAT('Team ', tt.guild_id::text)) AS team_name,
                     COALESCE(tt.team_icon_snapshot, it.guild_icon, '') AS team_icon
                 FROM TOURNAMENT_TEAMS tt
@@ -1728,6 +1785,7 @@ async def tournament_detail(tournament_id: int) -> dict[str, Any]:
             fixture_base AS (
                 SELECT
                     f.id,
+                    COALESCE(f.league_key, 'A') AS league_key,
                     f.home_guild_id,
                     f.away_guild_id,
                     COALESCE(ht.guild_name, f.home_name_raw, '') AS home_name,
@@ -1755,6 +1813,7 @@ async def tournament_detail(tournament_id: int) -> dict[str, Any]:
             ),
             played_matches AS (
                 SELECT
+                    fb.league_key,
                     fb.home_guild_id AS home_id,
                     fb.away_guild_id AS away_id,
                     CASE
@@ -1788,6 +1847,7 @@ async def tournament_detail(tournament_id: int) -> dict[str, Any]:
             ),
             manual_draw_matches AS (
                 SELECT
+                    fb.league_key,
                     fb.home_guild_id AS home_id,
                     fb.away_guild_id AS away_id,
                     0::int AS home_score,
@@ -1798,6 +1858,7 @@ async def tournament_detail(tournament_id: int) -> dict[str, Any]:
             ),
             manual_forfeit_matches AS (
                 SELECT
+                    fb.league_key,
                     fb.home_guild_id AS home_id,
                     fb.away_guild_id AS away_id,
                     CASE WHEN COALESCE(fb.is_forfeit_home, FALSE) THEN 0::int ELSE fb.forfeit_score END AS home_score,
@@ -1815,6 +1876,7 @@ async def tournament_detail(tournament_id: int) -> dict[str, Any]:
             ),
             team_rows AS (
                 SELECT
+                    league_key,
                     home_id AS guild_id,
                     1 AS matches_played,
                     CASE WHEN home_score > away_score THEN 1 ELSE 0 END AS wins,
@@ -1825,6 +1887,7 @@ async def tournament_detail(tournament_id: int) -> dict[str, Any]:
                 FROM all_matches
                 UNION ALL
                 SELECT
+                    league_key,
                     away_id AS guild_id,
                     1 AS matches_played,
                     CASE WHEN away_score > home_score THEN 1 ELSE 0 END AS wins,
@@ -1836,6 +1899,7 @@ async def tournament_detail(tournament_id: int) -> dict[str, Any]:
             ),
             agg AS (
                 SELECT
+                    league_key,
                     guild_id,
                     SUM(matches_played)::int AS matches_played,
                     SUM(wins)::int AS wins,
@@ -1844,7 +1908,7 @@ async def tournament_detail(tournament_id: int) -> dict[str, Any]:
                     SUM(goals_for)::int AS goals_for,
                     SUM(goals_against)::int AS goals_against
                 FROM team_rows
-                GROUP BY guild_id
+                GROUP BY league_key, guild_id
             ),
             points_cfg AS (
                 SELECT
@@ -1856,6 +1920,7 @@ async def tournament_detail(tournament_id: int) -> dict[str, Any]:
             )
             SELECT
                 t.guild_id,
+                t.league_key,
                 t.team_name,
                 t.team_icon,
                 COALESCE(a.matches_played, 0) AS matches_played,
@@ -1872,8 +1937,8 @@ async def tournament_detail(tournament_id: int) -> dict[str, Any]:
                 ) AS points
             FROM teams t
             CROSS JOIN points_cfg pc
-            LEFT JOIN agg a ON a.guild_id = t.guild_id
-            ORDER BY points DESC, goal_diff DESC, goals_for DESC, team_name ASC
+            LEFT JOIN agg a ON a.guild_id = t.guild_id AND a.league_key = t.league_key
+            ORDER BY t.league_key ASC, points DESC, goal_diff DESC, goals_for DESC, team_name ASC
             """,
             tournament_id,
         )
@@ -1882,6 +1947,7 @@ async def tournament_detail(tournament_id: int) -> dict[str, Any]:
             """
             SELECT
                 f.id,
+                COALESCE(f.league_key, 'A') AS league_key,
                 f.week_number,
                 f.week_label,
                 f.is_active,
@@ -1942,7 +2008,7 @@ async def tournament_detail(tournament_id: int) -> dict[str, Any]:
             LEFT JOIN IOSCA_TEAMS ht ON ht.guild_id = f.home_guild_id
             LEFT JOIN IOSCA_TEAMS at ON at.guild_id = f.away_guild_id
             WHERE f.tournament_id = $1
-            ORDER BY f.week_number NULLS LAST, f.id ASC
+            ORDER BY f.league_key ASC, f.week_number NULLS LAST, f.id ASC
             """,
             tournament_id,
         )
@@ -1951,13 +2017,14 @@ async def tournament_detail(tournament_id: int) -> dict[str, Any]:
             """
             SELECT
                 tt.guild_id,
+                COALESCE(tt.league_key, 'A') AS league_key,
                 COALESCE(tt.team_name_snapshot, it.guild_name) AS team_name,
                 COALESCE(tt.team_icon_snapshot, it.guild_icon, '') AS team_icon,
                 it.captain_name
             FROM TOURNAMENT_TEAMS tt
             LEFT JOIN IOSCA_TEAMS it ON it.guild_id = tt.guild_id
             WHERE tt.tournament_id = $1
-            ORDER BY team_name ASC
+            ORDER BY tt.league_key ASC, team_name ASC
             """,
             tournament_id,
         )
@@ -2269,11 +2336,39 @@ async def tournament_detail(tournament_id: int) -> dict[str, Any]:
 
     trimmed_team_forms = {team_id: results[-5:] for team_id, results in team_forms.items()}
 
+    tournament_payload = _record_to_dict(tournament)
+    standings_payload = _records_to_dicts(standings)
+    fixtures_payload = _records_to_dicts(fixtures)
+    teams_payload = _records_to_dicts(teams)
+    tournament_payload["league_count"] = int(tournament_payload.get("league_count") or 1)
+
+    leagues_map: dict[str, dict[str, Any]] = {}
+    for league_key in ["A", "B"]:
+        leagues_map[league_key] = {
+            "league_key": league_key,
+            "league_name": _tournament_league_label(league_key),
+            "standings": [],
+            "fixtures": [],
+            "teams": [],
+        }
+    for row in standings_payload:
+        leagues_map[_normalize_tournament_league_key(row.get("league_key"))]["standings"].append(row)
+    for row in fixtures_payload:
+        leagues_map[_normalize_tournament_league_key(row.get("league_key"))]["fixtures"].append(row)
+    for row in teams_payload:
+        leagues_map[_normalize_tournament_league_key(row.get("league_key"))]["teams"].append(row)
+    leagues_payload = [
+        leagues_map[key]
+        for key in ["A", "B"]
+        if leagues_map[key]["standings"] or leagues_map[key]["fixtures"] or leagues_map[key]["teams"] or key == "A"
+    ]
+
     return {
-        "tournament": _record_to_dict(tournament),
-        "standings": _records_to_dicts(standings),
-        "fixtures": _records_to_dicts(fixtures),
-        "teams": _records_to_dicts(teams),
+        "tournament": tournament_payload,
+        "standings": standings_payload,
+        "fixtures": fixtures_payload,
+        "teams": teams_payload,
+        "leagues": leagues_payload,
         "team_forms": trimmed_team_forms,
         "leaders": leaders_payload,
     }
