@@ -1,0 +1,88 @@
+KitData
+{
+	Name			"Home"
+	Author			"Ryan"
+
+	PrimaryColor 		"139 0 0  255"
+	SecondaryColor 	"0 88 12 255"
+
+	Team
+	{
+		Code "CJNG"
+		ShortName "Cartel Jalisco"
+		LongName "Cartel Jalisco Nueva Generacion"
+		IsClub 0
+		IsReal 1
+        	PrimaryBannerText "Vamos Cartel"
+        	SecondaryBannerText "Vamos Mencho"   		
+	}
+
+	Outfield
+	{
+		HasCollar	0
+
+		ShirtName
+		{
+			FillColor 			"255 255 255 255"				
+			HorizontalOffset 	0
+			VerticalOffset 		-4
+		}
+
+		ShirtBackNumber
+		{
+			FillColor 			"255 255 255 255"	
+			HorizontalOffset 	0
+			VerticalOffset 		0
+		}
+
+		ShortsNumber
+		{
+			IsOnRightLeg		0
+			FillColor 			"255 255 255 255"					
+			HorizontalOffset 	+6
+			VerticalOffset 		+37
+		}
+ 		
+                ShirtFrontNumber		
+       	        {
+                       FillColor 		        "0 0 0 0"
+                       OutlineColor	                "0 0 0 0"
+            	       HorizontalOffset 	+0
+                       VerticalOffset 	        +20
+                }
+	}
+	
+	Keeper
+	{
+		HasCollar	0
+		
+		ShirtName
+		{
+			FillColor 			"0 0 0 255"			
+			HorizontalOffset 	0
+			VerticalOffset 		-4
+		}
+
+		ShirtBackNumber
+		{
+			FillColor 			"0 0 0 255"
+			HorizontalOffset 	0
+			VerticalOffset 		0
+		}
+
+		ShortsNumber
+		{
+			IsOnRightLeg		0
+			FillColor 			"0 0 0 255"			
+			HorizontalOffset 	+6
+			VerticalOffset 		+37
+		}
+
+                ShirtFrontNumber		
+       	        {
+                       FillColor 		        "0 0 0 0"
+            	       HorizontalOffset 	+0
+                       VerticalOffset 	        +20
+                }
+	}
+}

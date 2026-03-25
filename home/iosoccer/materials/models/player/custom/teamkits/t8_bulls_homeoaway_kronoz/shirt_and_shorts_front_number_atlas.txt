@@ -1,0 +1,14 @@
+info face="FFF World Cup 2018 Adidas" size=80 bold=0 italic=0 charset="" unicode=1 stretchH=100 smooth=1 aa=1 padding=0,0,0,0 spacing=1,1 outline=4
+common lineHeight=80 base=60 scaleW=512 scaleH=128 pages=1 packed=0 alphaChnl=1 redChnl=0 greenChnl=0 blueChnl=0
+page id=0 file="shirt_and_shorts_front_number_atlas_0.tga"
+chars count=10
+char id=48   x=0     y=0     width=42    height=63    xoffset=-1    yoffset=1     xadvance=39    page=0  chnl=15
+char id=49   x=387   y=0     width=24    height=63    xoffset=-1    yoffset=1     xadvance=22    page=0  chnl=15
+char id=50   x=43    y=0     width=42    height=63    xoffset=-1    yoffset=1     xadvance=39    page=0  chnl=15
+char id=51   x=86    y=0     width=42    height=63    xoffset=-1    yoffset=1     xadvance=39    page=0  chnl=15
+char id=52   x=129   y=0     width=42    height=63    xoffset=-1    yoffset=1     xadvance=39    page=0  chnl=15
+char id=53   x=172   y=0     width=42    height=63    xoffset=-1    yoffset=1     xadvance=39    page=0  chnl=15
+char id=54   x=215   y=0     width=42    height=63    xoffset=-1    yoffset=1     xadvance=39    page=0  chnl=15
+char id=55   x=258   y=0     width=42    height=63    xoffset=-1    yoffset=1     xadvance=39    page=0  chnl=15
+char id=56   x=301   y=0     width=42    height=63    xoffset=-1    yoffset=1     xadvance=39    page=0  chnl=15
+char id=57   x=344   y=0     width=42    height=63    xoffset=-1    yoffset=1     xadvance=39    page=0  chnl=15

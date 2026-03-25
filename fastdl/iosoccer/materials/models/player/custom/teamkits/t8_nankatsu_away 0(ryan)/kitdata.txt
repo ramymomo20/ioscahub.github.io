@@ -1,0 +1,88 @@
+KitData
+{
+	Name			"Away"
+	Author			"Ryan"
+
+	PrimaryColor 		"50 72 150  255"
+	SecondaryColor 	"255 255 255 255"
+
+	Team
+	{
+		Code "NSC"
+		ShortName "Nankatsu"
+		LongName "Nankatsu SC"
+		IsClub 0
+		IsReal 1
+        	PrimaryBannerText "Vamos Nankatsu"
+        	SecondaryBannerText "Vamos Oliver"   		
+	}
+
+	Outfield
+	{
+		HasCollar	0
+
+		ShirtName
+		{
+			FillColor 			"255 255 255 255"				
+			HorizontalOffset 	
+			VerticalOffset 		-4
+		}
+
+		ShirtBackNumber
+		{
+			FillColor 			"255 255 255 255"	
+			HorizontalOffset 	0
+			VerticalOffset 		0
+		}
+
+		ShortsNumber
+		{
+			IsOnRightLeg		0
+			FillColor 			"255 255 255 255"					
+			HorizontalOffset 	+6
+			VerticalOffset 		+37
+		}
+ 		
+                ShirtFrontNumber		
+       	        {
+                       FillColor 		        "0 0 0 0"
+                       OutlineColor	                "0 0 0 0"
+            	       HorizontalOffset 	+0
+                       VerticalOffset 	        +20
+                }
+	}
+	
+	Keeper
+	{
+		HasCollar	0
+		
+		ShirtName
+		{
+			FillColor 			"255 255 255 255"			
+			HorizontalOffset 	0
+			VerticalOffset 		-4
+		}
+
+		ShirtBackNumber
+		{
+			FillColor 			"255 255 255 255"
+			HorizontalOffset 	0
+			VerticalOffset 		0
+		}
+
+		ShortsNumber
+		{
+			IsOnRightLeg		0
+			FillColor 			"255 255 255 255"			
+			HorizontalOffset 	+6
+			VerticalOffset 		+37
+		}
+
+                ShirtFrontNumber		
+       	        {
+                       FillColor 		        "0 0 0 0"
+            	       HorizontalOffset 	+0
+                       VerticalOffset 	        +20
+                }
+	}
+}

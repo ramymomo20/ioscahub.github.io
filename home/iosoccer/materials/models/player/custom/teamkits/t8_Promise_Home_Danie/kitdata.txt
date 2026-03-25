@@ -1,0 +1,92 @@
+KitData
+{
+    Name			"(Home '19,)"
+    Author			"Daniela1g"		  
+    Tags			"Americas, CALD2T3, Kit2022"	 
+
+    PrimaryColor 		"203 158 47 255"  
+    SecondaryColor 		"203 158 47 255"
+
+    Team
+    {
+        Code 			"PA"		
+        ShortName 		"Promise FC"			
+        LongName 		"Promise Academy FC"		
+        IsClub 			1		
+        IsReal 			0		
+        FifaCountryCode 	"IOS"		
+    }
+
+    Outfield
+	{
+		HasCollar	0
+
+		ShirtName
+		{
+			FillColor 			"255 255 255 255"			
+			OutlineColor			"0 0 0 0"				
+			HorizontalOffset 	0
+			VerticalOffset 		0
+		}
+
+		ShirtBackNumber
+		{
+			FillColor 			"255 255 255 255"			
+			OutlineColor			"0 0 0 0"
+			HorizontalOffset 	0
+			VerticalOffset 		+2
+		}
+
+		ShortsNumber
+		{
+			IsOnRightLeg		0
+			FillColor 			"255 255 255 255"			
+			OutlineColor			"0 0 0 0"		
+			HorizontalOffset 	+1
+			VerticalOffset 		25
+		}
+		ShirtFrontNumber		// [Optional] Usually only for national teams
+        	{
+            		FillColor 			"20 20 20 0"
+            		HorizontalOffset 	+0
+            		VerticalOffset 		20
+        	}
+	}
+	
+	Keeper
+	{
+		HasCollar	0
+		
+		ShirtName
+		{
+			FillColor 			"255 255 255 255"
+			OutlineColor 			"0 0 0 0"				
+			HorizontalOffset 	0
+			VerticalOffset 		-50
+		}
+
+		ShirtBackNumber
+		{
+			FillColor 			"255 255 255 255"
+			OutlineColor 			"0 0 0 0"
+			HorizontalOffset 	0
+			VerticalOffset 		-53
+		}
+
+		ShortsNumber
+		{
+			IsOnRightLeg		0
+			FillColor 			"189 181 120 255"
+			OutlineColor 			"0 0 0 0"	
+			HorizontalOffset 	+1
+			VerticalOffset 		25
+		}
+		ShirtFrontNumber		// [Optional] Usually only for national teams
+        	{
+            		FillColor 			"0 0 0 0"
+			OutlineColor			"0 0 0 0"
+            		HorizontalOffset 	0
+            		VerticalOffset 		20
+        	}
+	}
+}

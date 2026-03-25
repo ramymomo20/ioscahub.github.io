@@ -1,0 +1,90 @@
+KitData
+{
+	Name		"home"
+	Author		"T3MP0"
+
+	PrimaryColor 	"254 210 35 255"
+	SecondaryColor 	"0 0 0 255"
+
+	Team
+	{
+		Code "VKP"
+		ShortName "Vikepers"
+		LongName "Vikepers fc"
+		IsClub 0
+		IsReal 1
+	}
+
+	Outfield
+	{
+		HasCollar	0
+
+		ShirtName
+		{
+			FillColor 			"255 255 255 255"			
+			OutlineColor			"0 0 0 255"				
+			HorizontalOffset 	0
+			VerticalOffset 		-20
+		}
+
+		ShirtBackNumber
+		{
+			FillColor 			"255 255 255 255"			
+			OutlineColor			"0 0 0 255"
+			HorizontalOffset 	0
+			VerticalOffset 		-8
+		}
+
+		ShortsNumber
+		{
+			IsOnRightLeg		0
+			FillColor 			"189 181 120 255"			
+			OutlineColor			"0 0 0 255"		
+			HorizontalOffset 	+1
+			VerticalOffset 		25
+		}
+		ShirtFrontNumber		// [Optional] Usually only for national teams
+        	{
+            		FillColor 			"20 20 20 0"
+            		HorizontalOffset 	0
+            		VerticalOffset 		20
+        	}
+	}
+	
+	Keeper
+	{
+		HasCollar	0
+		
+		ShirtName
+		{
+			FillColor 			"255 255 255 255"
+			OutlineColor 			"0 0 0 255"				
+			HorizontalOffset 	0
+			VerticalOffset 		-20
+		}
+
+		ShirtBackNumber
+		{
+			FillColor 			"255 255 255 255"
+			OutlineColor 			"0 0 0 255"
+			HorizontalOffset 	0
+			VerticalOffset 		-8
+		}
+
+		ShortsNumber
+		{
+			IsOnRightLeg		0
+			FillColor 			"189 181 120 255"
+			OutlineColor 			"0 0 0 255"	
+			HorizontalOffset 	+1
+			VerticalOffset 		25
+		}
+		ShirtFrontNumber		// [Optional] Usually only for national teams
+        	{
+            		FillColor 			"0 0 0 0"
+			OutlineColor			"0 0 0 0"
+            		HorizontalOffset 	0
+            		VerticalOffset 		20
+        	}
+	}
+}

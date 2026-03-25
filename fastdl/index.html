@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>IOSCA FastDL</title>
+  <link rel="stylesheet" href="../frontend/assets/css/app.css">
+  <link rel="icon" type="image/png" href="../frontend/assets/icons/iosca-icon.png">
+  <link rel="apple-touch-icon" href="../frontend/assets/icons/iosca-icon.png">
+  <style>
+    .fastdl-page {
+      display: grid;
+      gap: 14px;
+    }
+
+    .fastdl-grid {
+      display: grid;
+      grid-template-columns: 1.15fr 0.85fr;
+      gap: 12px;
+      align-items: start;
+    }
+
+    .fastdl-stack {
+      display: grid;
+      gap: 12px;
+    }
+
+    .fastdl-list {
+      margin: 0;
+      padding-left: 18px;
+      color: #cfe4ff;
+      display: grid;
+      gap: 6px;
+    }
+
+    .fastdl-note {
+      color: #b9d4f5;
+      line-height: 1.45;
+      margin: 0;
+    }
+
+    .fastdl-code {
+      margin: 0;
+      padding: 12px 14px;
+      border-radius: 12px;
+      border: 1px solid var(--line-soft);
+      background: linear-gradient(180deg, rgba(8, 18, 35, 0.96), rgba(7, 14, 28, 0.98));
+      overflow-x: auto;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 0.92rem;
+      color: #ddf0ff;
+    }
+
+    .fastdl-example {
+      border: 1px solid var(--line-soft);
+      border-radius: 12px;
+      padding: 12px;
+      background: linear-gradient(180deg, rgba(21, 38, 69, 0.9), rgba(11, 23, 45, 0.92));
+    }
+
+    .fastdl-example h3,
+    .fastdl-table h3 {
+      margin-bottom: 8px;
+    }
+
+    .fastdl-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 10px;
+    }
+
+    .fastdl-pill {
+      display: inline-flex;
+      align-items: center;
+      border: 1px solid var(--line-soft);
+      border-radius: 999px;
+      padding: 4px 9px;
+      background: rgba(10, 24, 46, 0.78);
+      color: #dcecff;
+      font-size: 0.8rem;
+      font-weight: 700;
+    }
+
+    .fastdl-table table {
+      min-width: 100%;
+    }
+
+    .fastdl-table td code,
+    .fastdl-table th code {
+      font-family: Consolas, "Courier New", monospace;
+      color: #dff4ff;
+    }
+
+    @media (max-width: 920px) {
+      .fastdl-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <header class="header">
+      <div class="header-inner">
+        <a class="brand" href="../frontend/index.html">
+          <span class="brand-dot"></span>
+          IOSCA Hub
+        </a>
+        <nav class="nav">
+          <a class="nav-link" style="--nav-accent:#7cf2ff;" href="../frontend/index.html">Hub</a>
+          <a class="nav-link active" style="--nav-accent:#5de2a5;" href="./index.html">FastDL</a>
+        </nav>
+      </div>
+    </header>
+    <main class="main">
+      <section class="hero-banner">
+        <div class="hero-banner-glow"></div>
+        <div class="hero-banner-inner">
+          <img class="hero-logo" src="../frontend/assets/icons/iosca-icon.png" alt="IOSCA logo">
+          <div>
+            <div class="hero-kicker">SOURCE SERVER DELIVERY</div>
+            <h1 class="hero-title">FastDL Asset Host</h1>
+          </div>
+        </div>
+      </section>
+
+      <section class="card page-card fastdl-page">
+        <div class="fastdl-grid">
+          <section class="card">
+            <h2>What This Page Is For</h2>
+            <p class="fastdl-note">
+              FastDL hosts the exact custom files your Source server references so players download them over HTTP instead of trickle-downloading from the game server.
+            </p>
+            <div class="fastdl-actions">
+              <span class="fastdl-pill">Mirror server paths exactly</span>
+              <span class="fastdl-pill">Keep file name casing exact</span>
+              <span class="fastdl-pill">Publish <code>.bz2</code> beside raw files</span>
+            </div>
+            <div class="fastdl-example" style="margin-top:12px;">
+              <h3>IOSoccer config example</h3>
+              <pre class="fastdl-code">sv_allowdownload 1
+sv_allowupload 1
+sv_custom_assets 1
+sv_downloadurl "https://ioscahub.github.io/fastdl/iosoccer/"</pre>
+            </div>
+          </section>
+
+          <section class="card">
+            <h2>Human Links</h2>
+            <div class="list">
+              <div class="item">
+                <strong>Landing page</strong>
+                <div class="meta"><a href="./index.html">/fastdl/</a></div>
+              </div>
+              <div class="item">
+                <strong>Hub home</strong>
+                <div class="meta"><a href="../frontend/index.html">/frontend/index.html</a></div>
+              </div>
+              <div class="item">
+                <strong>Docs in this repo</strong>
+                <div class="meta">See <code>docs/fastdl_setup.md</code> and <code>scripts/build_fastdl.py</code></div>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <div class="fastdl-grid">
+          <section class="card fastdl-table">
+            <h2>Expected Web Layout</h2>
+            <pre class="fastdl-code">/fastdl/
+  index.html
+  iosoccer/
+    maps/
+    materials/
+    models/
+    sound/
+    resource/
+    particles/</pre>
+            <p class="fastdl-note" style="margin-top:10px;">
+              Point each server at its own game folder URL, not at the landing page itself.
+            </p>
+          </section>
+
+          <section class="card">
+            <h2>Folder Rules</h2>
+            <ul class="fastdl-list">
+              <li>For IOSoccer, enable <code>sv_custom_assets 1</code> in <code>iosoccer\cfg\autoexec.cfg</code>.</li>
+              <li>The web path must match the server path exactly.</li>
+              <li>Wrong casing will cause HTTP download fallback.</li>
+              <li>Use the trailing slash in <code>sv_downloadurl</code>.</li>
+              <li>Test a real asset URL in a browser after publish.</li>
+            </ul>
+          </section>
+        </div>
+
+        <section class="card fastdl-table">
+          <h2>Common Folders</h2>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Folder</th>
+                  <th>Typical files</th>
+                  <th>Example URL</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>maps</code></td>
+                  <td><code>.bsp</code>, <code>.nav</code>, overview text</td>
+                  <td><code>/fastdl/iosoccer/maps/custom_arena.bsp.bz2</code></td>
+                </tr>
+                <tr>
+                  <td><code>materials</code></td>
+                  <td><code>.vmt</code>, <code>.vtf</code></td>
+                  <td><code>/fastdl/iosoccer/materials/custom/banner.vtf.bz2</code></td>
+                </tr>
+                <tr>
+                  <td><code>models</code></td>
+                  <td><code>.mdl</code>, <code>.vvd</code>, <code>.phy</code>, <code>.vtx</code></td>
+                  <td><code>/fastdl/iosoccer/models/player/custom.mdl.bz2</code></td>
+                </tr>
+                <tr>
+                  <td><code>sound</code></td>
+                  <td><code>.wav</code>, <code>.mp3</code></td>
+                  <td><code>/fastdl/iosoccer/sound/custom/join.mp3.bz2</code></td>
+                </tr>
+                <tr>
+                  <td><code>resource</code></td>
+                  <td><code>.txt</code>, language or UI assets</td>
+                  <td><code>/fastdl/iosoccer/resource/ui/custom.txt.bz2</code></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="card">
+          <h2>Local Build Command</h2>
+          <pre class="fastdl-code">python scripts/build_fastdl.py `
+  --source "D:\Servers\IOSoccer\iosoccer" `
+  --site-root "iosca_hub_github\ioscahub.github.io\fastdl" `
+  --game-dir "iosoccer" `
+  --clean</pre>
+          <p class="fastdl-note" style="margin-top:10px;">
+            The script copies the usual FastDL folders into this site and writes a <code>.bz2</code> copy beside each file so the published site is immediately usable for Source clients.
+          </p>
+        </section>
+      </section>
+    </main>
+  </div>
+</body>
+</html>
