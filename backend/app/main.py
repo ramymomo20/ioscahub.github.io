@@ -599,6 +599,60 @@ def _infer_side_from_lineup(
     return "neutral"
 
 
+def _match_result_for_side(side: str, home_score: Any, away_score: Any) -> str | None:
+    home = _safe_int(home_score)
+    away = _safe_int(away_score)
+    if home == away:
+        return "D"
+    if side == "home":
+        return "W" if home > away else "L"
+    if side == "away":
+        return "W" if away > home else "L"
+    return None
+
+
+def _infer_side_from_player_match_row(match_row: dict[str, Any]) -> str:
+    home_lineup_keys = _extract_lineup_identity_sets(_parse_json(match_row.get("home_lineup"), []))
+    away_lineup_keys = _extract_lineup_identity_sets(_parse_json(match_row.get("away_lineup"), []))
+    home_summary_keys = _extract_summary_identity_sets(_parse_json(match_row.get("match_summary_home"), []))
+    away_summary_keys = _extract_summary_identity_sets(_parse_json(match_row.get("match_summary_away"), []))
+
+    home_identity_keys = {
+        "steam": set(home_lineup_keys["steam"]).union(home_summary_keys["steam"]),
+        "name": set(home_lineup_keys["name"]).union(home_summary_keys["name"]),
+    }
+    away_identity_keys = {
+        "steam": set(away_lineup_keys["steam"]).union(away_summary_keys["steam"]),
+        "name": set(away_lineup_keys["name"]).union(away_summary_keys["name"]),
+    }
+
+    home_guild_key = str(match_row.get("home_guild_id") or "").strip()
+    away_guild_key = str(match_row.get("away_guild_id") or "").strip()
+    home_name_key = _norm_text_key(match_row.get("home_team_name") or "")
+    away_name_key = _norm_text_key(match_row.get("away_team_name") or "")
+    item_guild_key = str(match_row.get("guild_id") or "").strip()
+    item_team_name_key = _norm_text_key(match_row.get("guild_team_name") or "")
+
+    is_same_side_match = (
+        (home_guild_key and away_guild_key and home_guild_key == away_guild_key)
+        or (home_name_key and away_name_key and home_name_key == away_name_key)
+    )
+
+    if not is_same_side_match:
+        if item_guild_key and item_guild_key == home_guild_key:
+            return "home"
+        if item_guild_key and item_guild_key == away_guild_key:
+            return "away"
+
+    if item_team_name_key:
+        if item_team_name_key == home_name_key:
+            return "home"
+        if item_team_name_key == away_name_key:
+            return "away"
+
+    return _infer_side_from_lineup(match_row, home_identity_keys, away_identity_keys)
+
+
 def _build_team_event_items(team_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     events: list[dict[str, Any]] = []
     for row in team_rows:
@@ -1175,7 +1229,7 @@ async def player_detail(steam_id: str) -> dict[str, Any]:
         totals = await conn.fetchrow(
             """
             SELECT
-                COUNT(*) AS matches_played,
+                COUNT(DISTINCT match_id::text) AS matches_played,
                 COALESCE(SUM(goals), 0) AS goals,
                 COALESCE(SUM(assists), 0) AS assists,
                 COALESCE(SUM(second_assists), 0) AS second_assists,
@@ -1323,6 +1377,70 @@ async def player_detail(steam_id: str) -> dict[str, Any]:
             canonical_steam_id,
         )
 
+        player_match_history_rows = await conn.fetch(
+            """
+            SELECT
+                COALESCE(ms.match_id::text, ms.id::text) AS match_id,
+                ms.id AS match_stats_id,
+                ms.datetime,
+                COALESCE(ht.guild_name, ms.home_team_name) AS home_team_name,
+                COALESCE(at.guild_name, ms.away_team_name) AS away_team_name,
+                ms.home_guild_id,
+                ms.away_guild_id,
+                ms.home_score,
+                ms.away_score,
+                ms.home_lineup,
+                ms.away_lineup,
+                ms.match_summary_home,
+                ms.match_summary_away,
+                ms.game_type,
+                tmeta.tournament_name,
+                CASE WHEN tmeta.tournament_id IS NOT NULL THEN TRUE ELSE FALSE END AS is_tournament,
+                pmd.guild_id,
+                pmd.guild_team_name,
+                pmd.player_name,
+                pmd.steam_id,
+                pmd.position,
+                pmd.goals,
+                pmd.assists,
+                pmd.keeper_saves,
+                pmd.tackles,
+                pmd.interceptions,
+                pmd.red_cards,
+                pmd.yellow_cards,
+                pmd.pass_accuracy,
+                pmd.passes_completed,
+                pmd.passes_attempted,
+                pmd.own_goals,
+                pmd.status,
+                pmd.clutch_actions,
+                pmd.sub_impact
+            FROM PLAYER_MATCH_DATA pmd
+            JOIN MATCH_STATS ms
+              ON (
+                   pmd.match_id::text = ms.match_id::text
+                   OR (CASE WHEN pmd.match_id::text ~ '^[0-9]+$' THEN pmd.match_id::bigint END) = ms.id::bigint
+              )
+            LEFT JOIN IOSCA_TEAMS ht ON ht.guild_id = ms.home_guild_id
+            LEFT JOIN IOSCA_TEAMS at ON at.guild_id = ms.away_guild_id
+            LEFT JOIN LATERAL (
+                SELECT f.tournament_id, t.name AS tournament_name
+                FROM TOURNAMENT_FIXTURES f
+                JOIN TOURNAMENTS t ON t.id = f.tournament_id
+                WHERE f.played_match_stats_id = ms.id
+                ORDER BY f.id DESC
+                LIMIT 1
+            ) AS tmeta ON TRUE
+            WHERE pmd.steam_id = ANY($1::text[])
+            ORDER BY
+                ms.datetime DESC,
+                CASE WHEN pmd.guild_id IS NULL THEN 1 ELSE 0 END,
+                pmd.updated_at DESC NULLS LAST,
+                pmd.id DESC
+            """,
+            steam_scope,
+        )
+
         outcome = await conn.fetchrow(
             """
             SELECT
@@ -1450,17 +1568,34 @@ async def player_detail(steam_id: str) -> dict[str, Any]:
         member_roles = []
     player_payload["member_roles"] = member_roles
 
-    outcome_payload = _record_to_dict(outcome)
     totals_payload = _record_to_dict(totals)
-    matches_played = int(outcome_payload.get("matches_played") or 0)
-    wins = int(outcome_payload.get("wins") or 0)
-    draws = int(outcome_payload.get("draws") or 0)
-    losses = int(outcome_payload.get("losses") or 0)
-    recent_payload = _records_to_dicts(recent)
-    for item in recent_payload:
+    raw_history_rows = _records_to_dicts(player_match_history_rows)
+    match_history_by_id: dict[str, dict[str, Any]] = {}
+    for item in raw_history_rows:
+        match_id = str(item.get("match_id") or item.get("match_stats_id") or "").strip()
+        if not match_id or match_id in match_history_by_id:
+            continue
+        item["result"] = _match_result_for_side(
+            _infer_side_from_player_match_row(item),
+            item.get("home_score"),
+            item.get("away_score"),
+        )
         item["clutch_actions"] = _parse_json(item.get("clutch_actions"), [])
         item["sub_impact"] = _parse_json(item.get("sub_impact"), {})
-    recent_form = [str(item.get("result") or "").upper() for item in recent_payload if str(item.get("result") or "").upper() in {"W", "D", "L"}][:5]
+        match_history_by_id[match_id] = item
+
+    match_history = list(match_history_by_id.values())
+    recent_payload = match_history[:20]
+    recent_form = [
+        str(item.get("result") or "").upper()
+        for item in recent_payload
+        if str(item.get("result") or "").upper() in {"W", "D", "L"}
+    ][:5]
+
+    matches_played = len(match_history)
+    wins = sum(1 for item in match_history if item.get("result") == "W")
+    draws = sum(1 for item in match_history if item.get("result") == "D")
+    losses = sum(1 for item in match_history if item.get("result") == "L")
     win_rate = round((wins / matches_played) * 100, 1) if matches_played > 0 else 0.0
     total_goals = int(totals_payload.get("goals") or 0)
     total_assists = int(totals_payload.get("assists") or 0)
@@ -1469,6 +1604,50 @@ async def player_detail(steam_id: str) -> dict[str, Any]:
     started_matches = int(totals_payload.get("started_matches") or 0)
     substitute_matches = int(totals_payload.get("substitute_matches") or 0)
     bench_matches = int(totals_payload.get("bench_matches") or 0)
+
+    activity_daily_counts: dict[str, int] = {}
+    for item in match_history:
+        date_key = str(item.get("datetime") or "")[:10]
+        if date_key:
+            activity_daily_counts[date_key] = activity_daily_counts.get(date_key, 0) + 1
+
+    record_definitions = [
+        ("highest_goals", "Highest Goals", "goals"),
+        ("most_completed_passes", "Most Completed Passes", "passes_completed"),
+        ("most_interceptions", "Most Interceptions", "interceptions"),
+        ("most_saves", "Most Saves", "keeper_saves"),
+        ("most_own_goals", "Most Own Goals", "own_goals"),
+    ]
+    player_records: list[dict[str, Any]] = []
+    for key, label, stat_key in record_definitions:
+        best_item = None
+        best_value = None
+        for item in match_history:
+            value = _safe_int(item.get(stat_key))
+            if best_value is None or value > best_value:
+                best_item = item
+                best_value = value
+        if best_item is None or best_value is None:
+            continue
+        player_records.append(
+            {
+                "key": key,
+                "label": label,
+                "value": int(best_value),
+                "match_id": best_item.get("match_id"),
+                "match_stats_id": best_item.get("match_stats_id"),
+                "datetime": best_item.get("datetime"),
+                "home_team_name": best_item.get("home_team_name"),
+                "away_team_name": best_item.get("away_team_name"),
+                "home_score": best_item.get("home_score"),
+                "away_score": best_item.get("away_score"),
+                "game_type": best_item.get("game_type"),
+                "tournament_name": best_item.get("tournament_name"),
+                "is_tournament": bool(best_item.get("is_tournament")),
+                "result": best_item.get("result"),
+            }
+        )
+
     player_summary = {
         "matches_played": matches_played,
         "wins": wins,
@@ -1492,6 +1671,12 @@ async def player_detail(steam_id: str) -> dict[str, Any]:
         "totals": totals_payload,
         "recent_matches": recent_payload,
         "summary": player_summary,
+        "activity": {
+            "daily_counts": activity_daily_counts,
+            "active_days": len(activity_daily_counts),
+            "matches_played": matches_played,
+        },
+        "records": player_records,
         "team": _record_to_dict(team),
     }
 

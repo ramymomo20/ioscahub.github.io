@@ -514,6 +514,10 @@
       const profileSteamId = String(entry.steamId || (stats && stats.steam_id) || "").trim();
       const playerNameNorm = normName(entry.name || (stats && stats.player_name) || "");
       const playerPos = String((stats && stats.position) || entry.pos || slot.pos || "").toUpperCase().trim();
+      const hoverClasses = [];
+      if (slot.x <= 18) hoverClasses.push("hover-left");
+      else if (slot.x >= 82) hoverClasses.push("hover-right");
+      if (slot.y >= 68) hoverClasses.push("hover-up");
       const isMvp = Boolean(
         mvpKey && (
           (mvpKey.steam && profileSteamId && mvpKey.steam === profileSteamId) ||
@@ -524,7 +528,7 @@
         ? `<a class="pitch-player-name-link" href="player.html?steam_id=${encodeURIComponent(profileSteamId)}">${esc(truncateName(entry.name, 16))}</a>`
         : esc(truncateName(entry.name, 16));
       return `
-        <div class="pitch-player ${isMvp ? "is-mvp" : ""}" style="left:${slot.x}%;top:${slot.y}%;">
+        <div class="pitch-player ${isMvp ? "is-mvp" : ""} ${hoverClasses.join(" ")}" style="left:${slot.x}%;top:${slot.y}%;">
           ${Number.isFinite(rating) ? `<div class="pitch-rating-chip">${esc(rating.toFixed(1))}</div>` : ""}
           <div class="pitch-jersey">${esc(entry.pos || slot.pos)}</div>
           <div class="pitch-player-name">${isMvp ? '<span class="mvp-badge" title="MVP">🏆</span>' : ""}${nameNode}</div>

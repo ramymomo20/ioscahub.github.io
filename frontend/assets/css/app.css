@@ -1223,6 +1223,51 @@ tbody tr:hover {
   transform: translateX(-50%) translateY(0);
 }
 
+.pitch-player.hover-left .pitch-hover-card {
+  left: 0;
+  transform: translateX(0) translateY(6px);
+}
+
+.pitch-player.hover-left:hover .pitch-hover-card {
+  transform: translateX(0) translateY(0);
+}
+
+.pitch-player.hover-right .pitch-hover-card {
+  left: auto;
+  right: 0;
+  transform: translateX(0) translateY(6px);
+}
+
+.pitch-player.hover-right:hover .pitch-hover-card {
+  transform: translateX(0) translateY(0);
+}
+
+.pitch-player.hover-up .pitch-hover-card {
+  top: auto;
+  bottom: calc(100% + 8px);
+  transform: translateX(-50%) translateY(-6px);
+}
+
+.pitch-player.hover-up:hover .pitch-hover-card {
+  transform: translateX(-50%) translateY(0);
+}
+
+.pitch-player.hover-left.hover-up .pitch-hover-card {
+  transform: translateX(0) translateY(-6px);
+}
+
+.pitch-player.hover-left.hover-up:hover .pitch-hover-card {
+  transform: translateX(0) translateY(0);
+}
+
+.pitch-player.hover-right.hover-up .pitch-hover-card {
+  transform: translateX(0) translateY(-6px);
+}
+
+.pitch-player.hover-right.hover-up:hover .pitch-hover-card {
+  transform: translateX(0) translateY(0);
+}
+
 .pitch-hover-head {
   display: flex;
   justify-content: space-between;
@@ -1575,6 +1620,114 @@ tbody tr:hover {
 .player-stat-widget li strong {
   color: #f2f7ff;
   font-weight: 700;
+}
+
+.player-activity-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.player-activity-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  color: #cfe4ff;
+  font-size: 0.92rem;
+}
+
+.activity-grid {
+  display: grid;
+  grid-template-rows: repeat(7, 10px);
+  grid-auto-flow: column;
+  grid-auto-columns: 10px;
+  gap: 3px;
+  width: max-content;
+  max-width: 100%;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.activity-cell {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  background: rgba(88, 113, 153, 0.24);
+  border: 1px solid rgba(117, 149, 196, 0.16);
+}
+
+.activity-cell.is-pad {
+  opacity: 0.22;
+}
+
+.activity-cell.level-1 {
+  background: rgba(60, 133, 255, 0.34);
+}
+
+.activity-cell.level-2 {
+  background: rgba(70, 170, 255, 0.5);
+}
+
+.activity-cell.level-3 {
+  background: rgba(85, 212, 167, 0.7);
+}
+
+.activity-cell.level-4 {
+  background: rgba(133, 255, 185, 0.9);
+}
+
+.activity-legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #aecaef;
+  font-size: 0.78rem;
+}
+
+.player-records-row {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.player-record-card {
+  min-width: 210px;
+  border: 1px solid rgba(128, 171, 230, 0.26);
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(22, 40, 74, 0.9), rgba(11, 22, 44, 0.95));
+  padding: 10px 11px;
+  display: grid;
+  gap: 6px;
+}
+
+.record-label {
+  color: #bcd6fa;
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.35px;
+}
+
+.record-value {
+  color: #f4fbff;
+  font-family: "Orbitron", "Rajdhani", sans-serif;
+  font-size: 1.5rem;
+  font-weight: 700;
+}
+
+.record-match a {
+  color: #dff0ff;
+  text-decoration: none;
+}
+
+.record-match a:hover {
+  text-decoration: underline;
+}
+
+.record-meta {
+  display: grid;
+  gap: 3px;
+  color: #9fbedf;
+  font-size: 0.78rem;
 }
 
 .team-hero-card .team-head {

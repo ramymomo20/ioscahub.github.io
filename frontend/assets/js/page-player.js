@@ -16,6 +16,8 @@
     const totals = data.totals || {};
     const recent = data.recent_matches || [];
     const summary = data.summary || {};
+    const activity = data.activity || {};
+    const records = Array.isArray(data.records) ? data.records : [];
     const team = data.team || {};
     const roleBadge = p.role_badge || {};
     const memberRoles = Array.isArray(p.member_roles) ? p.member_roles : [];
@@ -47,6 +49,15 @@
       return Math.round(totalNum(keys));
     }
 
+    function matchesCount() {
+      return intNum(summary.matches_played || totals.matches_played);
+    }
+
+    function distanceKmText(rawMeters) {
+      const km = num(rawMeters) / 1000;
+      return `${km.toFixed(km >= 100 ? 1 : 2)} km`;
+    }
+
     function pct(value, places) {
       return `${num(value).toFixed(places || 1)}%`;
     }
@@ -67,7 +78,7 @@
     }
 
     function possessionText() {
-      const matches = num(totals.matches_played);
+      const matches = matchesCount();
       if (matches <= 0) return '0%';
       // Matches existing /view_player presentation style.
       return pct(num(totals.possession) / (matches * 10), 2);
@@ -174,6 +185,78 @@
       ].join(' | ');
     }
 
+    function activityHeatmap() {
+      const dailyCounts = activity.daily_counts || {};
+      const end = new Date();
+      end.setHours(0, 0, 0, 0);
+      const start = new Date(end);
+      start.setDate(start.getDate() - 364);
+      const alignedStart = new Date(start);
+      alignedStart.setDate(alignedStart.getDate() - alignedStart.getDay());
+
+      const counts = Object.values(dailyCounts).map((value) => intNum(value));
+      const maxCount = counts.length ? Math.max(...counts) : 0;
+      const cells = [];
+
+      for (const cursor = new Date(alignedStart); cursor <= end; cursor.setDate(cursor.getDate() + 1)) {
+        const iso = cursor.toISOString().slice(0, 10);
+        const count = intNum(dailyCounts[iso] || 0);
+        const inRange = cursor >= start;
+        let level = 0;
+        if (count > 0 && maxCount > 0) {
+          const ratio = count / maxCount;
+          level = ratio >= 0.85 ? 4 : ratio >= 0.55 ? 3 : ratio >= 0.25 ? 2 : 1;
+        }
+        cells.push(
+          `<span class="activity-cell level-${level}${inRange ? '' : ' is-pad'}" title="${esc(iso)}: ${esc(count)} matches"></span>`
+        );
+      }
+
+      return `
+        <div class="player-activity-panel">
+          <div class="player-activity-meta">
+            <span><strong>${esc(intNum(activity.active_days || 0))}</strong> active days</span>
+            <span><strong>${esc(matchesCount())}</strong> matches</span>
+          </div>
+          <div class="activity-grid">${cells.join('')}</div>
+          <div class="activity-legend">
+            <span>Less</span>
+            <span class="activity-cell level-0"></span>
+            <span class="activity-cell level-1"></span>
+            <span class="activity-cell level-2"></span>
+            <span class="activity-cell level-3"></span>
+            <span class="activity-cell level-4"></span>
+            <span>More</span>
+          </div>
+        </div>
+      `;
+    }
+
+    function recordsScroller() {
+      if (!records.length) {
+        return '<div class="meta">No personal records available yet.</div>';
+      }
+      return `
+        <div class="player-records-row">
+          ${records.map((record) => `
+            <article class="player-record-card">
+              <div class="record-label">${esc(record.label || record.key || 'Record')}</div>
+              <div class="record-value">${esc(intNum(record.value))}</div>
+              <div class="record-match">
+                <a href="match.html?id=${esc(record.match_id || record.match_stats_id || '')}">
+                  ${esc(record.home_team_name || 'Home')} ${esc(record.home_score ?? 0)} - ${esc(record.away_score ?? 0)} ${esc(record.away_team_name || 'Away')}
+                </a>
+              </div>
+              <div class="record-meta">
+                <span>${esc(record.is_tournament ? `Tournament${record.tournament_name ? `: ${record.tournament_name}` : ''}` : 'Official Mix')}</span>
+                <span>${esc(fmtDateTime(record.datetime))}</span>
+              </div>
+            </article>
+          `).join('')}
+        </div>
+      `;
+    }
+
     page.innerHTML = `
       <div class="grid cols-2 player-top-grid">
         <div class="player-left-stack">
@@ -268,7 +351,7 @@
         <div class="card" style="margin:0;">
           <h3>Performance Overview</h3>
           <div class="grid cols-2">
-            <div class="stat"><div class="label">Matches</div><div class="value">${esc(totalInt(['matches_played']))}</div></div>
+            <div class="stat"><div class="label">Matches</div><div class="value">${esc(matchesCount())}</div></div>
             <div class="stat"><div class="label">Pass Accuracy</div><div class="value">${esc(pct(totals.avg_pass_accuracy, 1))}</div></div>
           </div>
           <div class="player-stats-grid">
@@ -314,11 +397,21 @@
                 { label: 'Penalties', keys: ['penalties'] }
               ]),
               ...(totalInt(['distance_covered', 'distanceCovered']) > 0
-                ? [statLine('Distance Covered', `${totalInt(['distance_covered', 'distanceCovered'])} m`)]
+                ? [statLine('Distance Covered', distanceKmText(totalNum(['distance_covered', 'distanceCovered'])))]
                 : []),
               statLine('Possession', possessionText())
             ])}
           </div>
+        </div>
+      </div>
+      <div class="grid cols-2" style="margin-top:10px;">
+        <div class="card" style="margin:0;">
+          <h3>Activity</h3>
+          ${activityHeatmap()}
+        </div>
+        <div class="card" style="margin:0;">
+          <h3>Personal Bests</h3>
+          ${recordsScroller()}
         </div>
       </div>
       <div class="card" style="margin-top:10px;">
