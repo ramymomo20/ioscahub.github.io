@@ -79,9 +79,28 @@
 
     function possessionText() {
       const matches = matchesCount();
-      if (matches <= 0) return '0%';
-      // Matches existing /view_player presentation style.
-      return pct(num(totals.possession) / (matches * 10), 2);
+      if (matches <= 0) return '0.0';
+      return (num(totals.possession) / matches).toFixed(1);
+    }
+
+    function formatActivityDate(isoDate) {
+      const raw = String(isoDate || '').slice(0, 10);
+      const parts = raw.split('-').map((part) => Number(part));
+      if (parts.length !== 3 || parts.some((part) => !Number.isFinite(part))) return raw || 'Unknown date';
+      const [year, month, day] = parts;
+      const date = new Date(Date.UTC(year, month - 1, day));
+      return new Intl.DateTimeFormat(undefined, {
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+        timeZone: 'UTC'
+      }).format(date);
+    }
+
+    function formatActivityLabel(isoDate, count) {
+      const total = intNum(count);
+      return `${formatActivityDate(isoDate)} - ${total} ${total === 1 ? 'game' : 'games'}`;
     }
 
     function resultTag(result) {
@@ -197,6 +216,9 @@
       const counts = Object.values(dailyCounts).map((value) => intNum(value));
       const maxCount = counts.length ? Math.max(...counts) : 0;
       const cells = [];
+      const defaultReadout = counts.length
+        ? 'Hover a day to see when this player was active.'
+        : 'No activity logged yet.';
 
       for (const cursor = new Date(alignedStart); cursor <= end; cursor.setDate(cursor.getDate() + 1)) {
         const iso = cursor.toISOString().slice(0, 10);
@@ -207,8 +229,13 @@
           const ratio = count / maxCount;
           level = ratio >= 0.85 ? 4 : ratio >= 0.55 ? 3 : ratio >= 0.25 ? 2 : 1;
         }
+        if (!inRange) {
+          cells.push('<span class="activity-cell is-pad" aria-hidden="true"></span>');
+          continue;
+        }
+        const label = formatActivityLabel(iso, count);
         cells.push(
-          `<span class="activity-cell level-${level}${inRange ? '' : ' is-pad'}" title="${esc(iso)}: ${esc(count)} matches"></span>`
+          `<button type="button" class="activity-cell level-${level}" data-activity-label="${esc(label)}" title="${esc(label)}" aria-label="${esc(label)}"></button>`
         );
       }
 
@@ -218,7 +245,10 @@
             <span><strong>${esc(intNum(activity.active_days || 0))}</strong> active days</span>
             <span><strong>${esc(matchesCount())}</strong> matches</span>
           </div>
-          <div class="activity-grid">${cells.join('')}</div>
+          <div class="activity-grid-wrap">
+            <div class="activity-grid">${cells.join('')}</div>
+          </div>
+          <div class="activity-hover-readout" data-default="${esc(defaultReadout)}">${esc(defaultReadout)}</div>
           <div class="activity-legend">
             <span>Less</span>
             <span class="activity-cell level-0"></span>
@@ -262,21 +292,23 @@
         <div class="player-left-stack">
           <div class="card profile-hero-card" style="margin:0;">
             <div class="profile-head">
-              <img class="profile-avatar-lg" src="${esc(p.display_avatar_url || p.steam_avatar_url || p.avatar_url || p.avatar_fallback_url || fallbackAvatar)}" alt="avatar" onerror="this.onerror=null;this.src='${fallbackAvatar}';">
-              <div class="profile-details">
-                <h2>${esc(p.discord_name || p.steam_name || 'Unknown')}</h2>
-                <div class="player-role-rating">
-                  <div class="role-box">
-                    <div class="k">Position</div>
-                    <div class="v">${esc(p.position || 'N/A')}</div>
-                  </div>
-                  <div class="role-box">
+              <div class="profile-media-column">
+                <div class="profile-hero-badges">
+                  <div class="role-box profile-rating-box">
                     <div class="k">Rating</div>
                     <div class="v">${esc(fmtRating(p.rating))}</div>
                   </div>
+                  <div class="role-box profile-position-box">
+                    <div class="k">Position</div>
+                    <div class="v">${esc(p.position || 'N/A')}</div>
+                  </div>
                 </div>
+                <img class="profile-avatar-lg" src="${esc(p.display_avatar_url || p.steam_avatar_url || p.avatar_url || p.avatar_fallback_url || fallbackAvatar)}" alt="avatar" onerror="this.onerror=null;this.src='${fallbackAvatar}';">
+                ${p.steam_profile_url ? `<div class="profile-link profile-link-centered"><a target="_blank" rel="noreferrer" href="${esc(p.steam_profile_url)}">Open Steam profile</a></div>` : ''}
+              </div>
+              <div class="profile-details">
+                <h2>${esc(p.discord_name || p.steam_name || 'Unknown')}</h2>
                 <div class="meta">Steam: ${esc(p.steam_id)}${p.steam_name ? ` | ${esc(p.steam_name)}` : ''}</div>
-                ${p.steam_profile_url ? `<div class="profile-link"><a target="_blank" rel="noreferrer" href="${esc(p.steam_profile_url)}">Open Steam profile</a></div>` : ''}
                 ${
                   team.guild_id
                     ? `
@@ -435,6 +467,22 @@
         </div>
       </div>
     `;
+
+    const activityReadout = page.querySelector('.activity-hover-readout');
+    const activityCells = page.querySelectorAll('.activity-cell[data-activity-label]');
+    if (activityReadout && activityCells.length) {
+      const defaultReadout = activityReadout.getAttribute('data-default') || activityReadout.textContent || '';
+      const setReadout = (text) => {
+        activityReadout.textContent = text;
+      };
+      activityCells.forEach((cell) => {
+        const label = cell.getAttribute('data-activity-label') || defaultReadout;
+        cell.addEventListener('mouseenter', () => setReadout(label));
+        cell.addEventListener('focus', () => setReadout(label));
+        cell.addEventListener('mouseleave', () => setReadout(defaultReadout));
+        cell.addEventListener('blur', () => setReadout(defaultReadout));
+      });
+    }
   } catch (err) {
     showError(`Failed to load player profile: ${err.message}`);
   }

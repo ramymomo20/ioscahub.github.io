@@ -1391,9 +1391,10 @@ tbody tr:hover {
 }
 
 .profile-hero-card .profile-head {
-  display: flex;
-  align-items: center;
-  gap: 14px;
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  align-items: start;
+  gap: 18px;
 }
 
 .player-top-grid {
@@ -1403,6 +1404,21 @@ tbody tr:hover {
 .player-left-stack {
   display: grid;
   gap: 0;
+}
+
+.profile-media-column {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+}
+
+.profile-hero-badges {
+  display: inline-flex;
+  align-items: stretch;
+  justify-content: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  width: 100%;
 }
 
 .profile-avatar-lg {
@@ -1419,36 +1435,45 @@ tbody tr:hover {
   font-size: clamp(1.5rem, 2.5vw, 2rem);
 }
 
+.profile-details {
+  min-width: 0;
+}
+
 .profile-details .meta {
   font-size: 1.03rem;
   line-height: 1.35;
 }
 
-.player-role-rating {
-  margin-top: 8px;
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.player-role-rating .role-box {
+.profile-hero-badges .role-box {
   border: 1px solid var(--line-soft);
   border-radius: 10px;
   background: linear-gradient(180deg, rgba(29, 53, 96, 0.88), rgba(16, 31, 61, 0.92));
-  padding: 8px 10px;
+  padding: 6px 9px;
+  min-width: 72px;
+  text-align: center;
 }
 
-.player-role-rating .role-box .k {
+.profile-hero-badges .role-box .k {
   color: #bcd6fa;
-  font-size: 0.86rem;
+  font-size: 0.76rem;
+  line-height: 1.05;
 }
 
-.player-role-rating .role-box .v {
-  margin-top: 2px;
+.profile-hero-badges .role-box .v {
+  margin-top: 1px;
   color: #ecf5ff;
-  font-size: 1.2rem;
+  font-size: 1rem;
   font-weight: 700;
   letter-spacing: 0.2px;
+  line-height: 1.05;
+}
+
+.profile-hero-badges .profile-rating-box .v {
+  font-size: 1.28rem;
+}
+
+.profile-hero-badges .profile-position-box .v {
+  font-size: 0.96rem;
 }
 
 .profile-details .profile-link {
@@ -1456,8 +1481,12 @@ tbody tr:hover {
   font-size: 1rem;
 }
 
+.profile-link-centered {
+  text-align: center;
+}
+
 .player-team-chip {
-  margin-top: 10px;
+  margin-top: 8px;
   display: inline-flex;
   align-items: center;
   gap: 10px;
@@ -1625,6 +1654,8 @@ tbody tr:hover {
 .player-activity-panel {
   display: grid;
   gap: 10px;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .player-activity-meta {
@@ -1635,6 +1666,13 @@ tbody tr:hover {
   font-size: 0.92rem;
 }
 
+.activity-grid-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 4px;
+}
+
 .activity-grid {
   display: grid;
   grid-template-rows: repeat(7, 10px);
@@ -1642,21 +1680,26 @@ tbody tr:hover {
   grid-auto-columns: 10px;
   gap: 3px;
   width: max-content;
-  max-width: 100%;
-  overflow-x: auto;
-  padding-bottom: 2px;
+  min-width: max-content;
 }
 
 .activity-cell {
+  appearance: none;
+  display: block;
   width: 10px;
   height: 10px;
+  padding: 0;
   border-radius: 3px;
   background: rgba(88, 113, 153, 0.24);
   border: 1px solid rgba(117, 149, 196, 0.16);
+  cursor: pointer;
+  transition: transform 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
 }
 
 .activity-cell.is-pad {
   opacity: 0.22;
+  cursor: default;
+  pointer-events: none;
 }
 
 .activity-cell.level-1 {
@@ -1675,12 +1718,31 @@ tbody tr:hover {
   background: rgba(133, 255, 185, 0.9);
 }
 
+.activity-cell:hover,
+.activity-cell:focus-visible {
+  outline: none;
+  transform: translateY(-1px);
+  border-color: rgba(170, 227, 255, 0.72);
+  box-shadow: 0 0 0 1px rgba(170, 227, 255, 0.2), 0 0 12px rgba(92, 188, 255, 0.3);
+}
+
+.activity-hover-readout {
+  color: #b9d9ff;
+  font-size: 0.84rem;
+  min-height: 18px;
+}
+
 .activity-legend {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   color: #aecaef;
   font-size: 0.78rem;
+}
+
+.activity-legend .activity-cell {
+  cursor: default;
+  pointer-events: none;
 }
 
 .player-records-row {
@@ -2084,6 +2146,25 @@ tbody tr:hover {
 
   .player-quick-summary {
     grid-template-columns: 1fr;
+  }
+
+  .profile-hero-card .profile-head {
+    grid-template-columns: 1fr;
+    justify-items: center;
+  }
+
+  .profile-details {
+    width: 100%;
+    text-align: center;
+  }
+
+  .player-team-chip,
+  .player-role-asset-chip {
+    justify-content: center;
+  }
+
+  .player-role-chip-list {
+    justify-content: center;
   }
 
   .team-summary-widgets {
