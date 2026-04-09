@@ -874,12 +874,8 @@ tbody tr:hover {
 .match-side-event-summary {
   display: grid;
   justify-items: center;
-  gap: 8px;
+  gap: 6px;
   width: 100%;
-}
-
-.match-side-event-logo {
-  display: none;
 }
 
 .match-side-event-counts {
@@ -919,65 +915,38 @@ tbody tr:hover {
   color: #bed4f3;
 }
 
-.event-map-horizontal-shell {
+.event-map-flow-strip {
   display: grid;
   grid-auto-flow: column;
-  grid-auto-columns: minmax(180px, 220px);
+  grid-auto-columns: minmax(170px, 210px);
   gap: 12px;
   overflow-x: auto;
   padding-bottom: 6px;
   scrollbar-width: thin;
 }
 
-.event-map-card-item {
-  position: relative;
+.event-map-flow-column {
   display: grid;
+  grid-template-rows: minmax(68px, 1fr) auto minmax(68px, 1fr);
   gap: 10px;
-  min-height: 126px;
-  padding: 12px;
-  border-radius: 18px;
-  border: 1px solid rgba(136, 181, 255, 0.18);
-  background:
-    radial-gradient(circle at top center, rgba(124, 242, 255, 0.08), transparent 34%),
-    linear-gradient(180deg, rgba(12, 24, 47, 0.96), rgba(7, 15, 32, 0.98));
-  box-shadow: 0 16px 28px rgba(3, 12, 28, 0.18);
+  min-height: 176px;
 }
 
-.event-map-card-item.home {
-  border-color: rgba(124, 242, 255, 0.24);
-}
-
-.event-map-card-item.away {
-  border-color: rgba(125, 240, 195, 0.24);
-}
-
-.event-map-card-top {
+.event-map-flow-lane {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
 }
 
-.event-map-side {
-  display: inline-flex;
-  align-items: center;
-  min-height: 24px;
-  padding: 3px 8px;
-  border-radius: 999px;
-  border: 1px solid rgba(136, 181, 255, 0.16);
-  background: rgba(7, 18, 37, 0.78);
-  font-size: 0.72rem;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+.event-map-flow-lane.home {
+  align-items: flex-end;
 }
 
-.event-map-side.home {
-  color: #9fe9ff;
+.event-map-flow-lane.away {
+  align-items: flex-start;
 }
 
-.event-map-side.away {
-  color: #98ffe4;
+.event-map-flow-empty {
+  width: 100%;
+  min-height: 56px;
 }
 
 .event-map-minute {
@@ -985,6 +954,8 @@ tbody tr:hover {
   align-items: center;
   justify-content: center;
   min-height: 30px;
+  width: fit-content;
+  margin: 0 auto;
   padding: 0 10px;
   border-radius: 999px;
   border: 1px solid rgba(136, 181, 255, 0.22);
@@ -995,12 +966,26 @@ tbody tr:hover {
   letter-spacing: 0.05em;
 }
 
-.event-map-card-body {
+.event-map-flow-event {
   display: grid;
   grid-template-columns: 20px minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
   min-width: 0;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 14px;
+  border: 1px solid rgba(136, 181, 255, 0.18);
+  background: rgba(10, 22, 43, 0.92);
+  box-shadow: 0 14px 24px rgba(3, 12, 28, 0.2);
+}
+
+.event-map-flow-event.home {
+  border-color: rgba(124, 242, 255, 0.24);
+}
+
+.event-map-flow-event.away {
+  border-color: rgba(125, 240, 195, 0.24);
 }
 
 .event-map-icon {
@@ -3264,14 +3249,13 @@ tbody tr:hover {
     grid-template-columns: 1fr;
   }
 
-  .event-map-horizontal-shell {
-    grid-auto-columns: minmax(160px, 78vw);
+  .event-map-flow-strip {
+    grid-auto-columns: minmax(148px, 72vw);
     gap: 10px;
   }
 
-  .event-map-card-item {
-    min-height: 116px;
-    padding: 10px;
+  .event-map-flow-column {
+    min-height: 162px;
   }
 
   .team-comparison-values {

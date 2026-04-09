@@ -403,13 +403,8 @@
     ["team1", "team2"].forEach((which) => {
       const input = byId(`${which}-search`);
       if (input) {
-        input.addEventListener("focus", (event) => {
+        input.addEventListener("focus", () => {
           activePicker = which;
-          render({
-            id: `${which}-search`,
-            start: event.target.selectionStart,
-            end: event.target.selectionEnd,
-          });
         });
         input.addEventListener("input", (event) => {
           clearPickerTimer();

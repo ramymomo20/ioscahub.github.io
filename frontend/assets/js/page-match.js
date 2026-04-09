@@ -508,29 +508,22 @@
     return items;
   }
 
-  function eventTimelineCardHtml(item) {
+  function eventTimelineEventHtml(item) {
     const meta = STAT_META[item.kind] || STAT_META.goal;
-    const minuteLabel = item.minute !== null ? `${item.minute}'` : meta.chip;
     const extraLabel = item.minute === null && item.count > 1 ? ` x${item.count}` : "";
     const ratingBadge = Number.isFinite(item.rating)
       ? `<span class="event-map-rating">${esc(item.rating.toFixed(1))}</span>`
       : "";
 
     return `
-      <article class="event-map-card-item ${esc(item.side)} ${esc(item.kind)}">
-        <div class="event-map-card-top">
-          <span class="event-map-side ${esc(item.side)}">${esc(item.side === "home" ? "Home" : "Away")}</span>
-          <span class="event-map-minute">${esc(minuteLabel)}</span>
+      <div class="event-map-flow-event ${esc(item.side)} ${esc(item.kind)}">
+        <img class="event-map-icon" src="${esc(meta.icon)}" alt="${esc(meta.label)}">
+        <div class="event-map-text">
+          <strong>${esc(item.name)}</strong>
+          <span>${esc(meta.label)}${esc(extraLabel)}</span>
         </div>
-        <div class="event-map-card-body">
-          <img class="event-map-icon" src="${esc(meta.icon)}" alt="${esc(meta.label)}">
-          <div class="event-map-text">
-            <strong>${esc(item.name)}</strong>
-            <span>${esc(meta.label)}${esc(extraLabel)}</span>
-          </div>
-          ${ratingBadge}
-        </div>
-      </article>
+        ${ratingBadge}
+      </div>
     `;
   }
 
@@ -538,18 +531,29 @@
     const goals = Number.isFinite(Number(goalValue)) ? Math.max(0, Math.round(Number(goalValue))) : eventCount(events, "goal");
     const cards = eventCount(events, "yellow") + eventCount(events, "red");
     const ownGoals = eventCount(events, "own_goal");
-    const fallbackIcon = /iosca/i.test(String(teamName || "")) ? "assets/icons/iosca-icon.png" : "";
-    const icon = String(teamIcon || "").trim() || fallbackIcon;
 
     return `
       <div class="match-side-event-summary ${esc(side)}">
-        ${icon ? `<img class="match-side-event-logo" src="${esc(icon)}" alt="${esc(teamName || side)}">` : ""}
         <div class="match-side-event-counts">
           <span class="match-side-event-pill">${esc(goals)} Goals</span>
           <span class="match-side-event-pill">${esc(cards)} Cards</span>
           ${ownGoals > 0 ? `<span class="match-side-event-pill subtle">${esc(ownGoals)} OG</span>` : ""}
         </div>
       </div>
+    `;
+  }
+
+  function eventTimelineColumnHtml(item) {
+    const minuteLabel = item.minute !== null ? `${item.minute}'` : (STAT_META[item.kind] || STAT_META.goal).chip;
+    const homeMarkup = item.side === "home" ? eventTimelineEventHtml(item) : '<div class="event-map-flow-empty"></div>';
+    const awayMarkup = item.side === "away" ? eventTimelineEventHtml(item) : '<div class="event-map-flow-empty"></div>';
+
+    return `
+      <article class="event-map-flow-column ${esc(item.side)}">
+        <div class="event-map-flow-lane home">${homeMarkup}</div>
+        <div class="event-map-minute">${esc(minuteLabel)}</div>
+        <div class="event-map-flow-lane away">${awayMarkup}</div>
+      </article>
     `;
   }
 
@@ -568,10 +572,10 @@
             <div class="match-section-kicker">Event Map</div>
             <h3>Match Flow</h3>
           </div>
-          <div class="match-section-note">Goals and cards are shown left to right in minute order.</div>
+          <div class="match-section-note">Home events stay on top, away events stay on bottom, left to right by minute.</div>
         </div>
-        <div class="event-map-horizontal-shell">
-          ${timeline.length ? timeline.map(eventTimelineCardHtml).join("") : '<div class="match-story-empty center">No tracked match events</div>'}
+        <div class="event-map-flow-strip">
+          ${timeline.length ? timeline.map(eventTimelineColumnHtml).join("") : '<div class="match-story-empty center">No tracked match events</div>'}
         </div>
       </section>
     `;
