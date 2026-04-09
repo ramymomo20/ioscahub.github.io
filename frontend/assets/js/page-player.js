@@ -292,23 +292,21 @@
         <div class="player-left-stack">
           <div class="card profile-hero-card" style="margin:0;">
             <div class="profile-head">
-              <div class="profile-media-column">
-                <div class="profile-hero-badges">
-                  <div class="role-box profile-rating-box">
-                    <div class="k">Rating</div>
-                    <div class="v">${esc(fmtRating(p.rating))}</div>
-                  </div>
-                  <div class="role-box profile-position-box">
+              <img class="profile-avatar-lg" src="${esc(p.display_avatar_url || p.steam_avatar_url || p.avatar_url || p.avatar_fallback_url || fallbackAvatar)}" alt="avatar" onerror="this.onerror=null;this.src='${fallbackAvatar}';">
+              <div class="profile-details">
+                <h2>${esc(p.discord_name || p.steam_name || 'Unknown')}</h2>
+                <div class="player-role-rating">
+                  <div class="role-box">
                     <div class="k">Position</div>
                     <div class="v">${esc(p.position || 'N/A')}</div>
                   </div>
+                  <div class="role-box">
+                    <div class="k">Rating</div>
+                    <div class="v">${esc(fmtRating(p.rating))}</div>
+                  </div>
                 </div>
-                <img class="profile-avatar-lg" src="${esc(p.display_avatar_url || p.steam_avatar_url || p.avatar_url || p.avatar_fallback_url || fallbackAvatar)}" alt="avatar" onerror="this.onerror=null;this.src='${fallbackAvatar}';">
-                ${p.steam_profile_url ? `<div class="profile-link profile-link-centered"><a target="_blank" rel="noreferrer" href="${esc(p.steam_profile_url)}">Open Steam profile</a></div>` : ''}
-              </div>
-              <div class="profile-details">
-                <h2>${esc(p.discord_name || p.steam_name || 'Unknown')}</h2>
                 <div class="meta">Steam: ${esc(p.steam_id)}${p.steam_name ? ` | ${esc(p.steam_name)}` : ''}</div>
+                ${p.steam_profile_url ? `<div class="profile-link"><a target="_blank" rel="noreferrer" href="${esc(p.steam_profile_url)}">Open Steam profile</a></div>` : ''}
                 ${
                   team.guild_id
                     ? `

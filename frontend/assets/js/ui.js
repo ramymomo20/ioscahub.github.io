@@ -34,6 +34,8 @@
       ['matches.html', 'Matches', 'matches', '#9ac6ff'],
       ['tournaments.html', 'Tournaments', 'tournaments', '#86f0ff'],
       ['teams.html', 'Teams', 'teams', '#89a8ff'],
+      ['h2h.html', 'H2H', 'h2h', '#7cffd2'],
+      ['builder.html', 'Builder', 'builder', '#ffd88d'],
       ['servers.html', 'Servers', 'servers', '#7cdcff'],
       ['discord.html', 'Discord', 'discord', '#8be4ff']
     ];

@@ -145,6 +145,9 @@
                 </div>
               </div>
               <div class="meta" style="margin-top:8px;">Created: ${fmtDateTime(team.created_at)}</div>
+              <div class="team-hero-actions">
+                <a class="player-browser-action primary" href="h2h.html?team1=${encodeURIComponent(String(id || ''))}">Compare In H2H</a>
+              </div>
             </div>
           </div>
         </div>

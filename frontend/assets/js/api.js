@@ -78,14 +78,15 @@
     health: () => request('/health'),
     summary: () => request('/summary'),
     rankings: (limit) => request('/rankings', { limit }),
-    players: (limit) => request('/players', { limit }),
+    players: (params) => request('/players', typeof params === 'object' ? params : { limit: params }),
     player: (steamId) => request('/player', { steam_id: steamId }),
-    matches: (limit) => request('/matches', { limit }),
+    matches: (params) => request('/matches', typeof params === 'object' ? params : { limit: params }),
     match: (id) => request('/match', { id }),
     tournaments: () => request('/tournaments'),
     tournament: (id) => request(`/tournaments/${encodeURIComponent(id)}`),
-    teams: () => request('/teams'),
+    teams: (params) => request('/teams', typeof params === 'object' ? params : undefined),
     team: (guildId) => request('/team', { guild_id: guildId }),
+    teamH2H: (team1, team2, limit) => request('/team-h2h', { team1, team2, limit }),
     servers: () => request('/servers'),
     discord: () => request('/discord')
   };

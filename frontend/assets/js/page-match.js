@@ -355,6 +355,270 @@
     return out;
   }
 
+  function sumStat(sideStats, keys) {
+    return (sideStats || []).reduce((sum, player) => sum + pickNum(player, keys), 0);
+  }
+
+  function formatMetric(value, decimals) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return "0";
+    return decimals > 0 ? n.toFixed(decimals) : String(Math.round(n));
+  }
+
+  function teamAggregateStats(sideStats) {
+    const players = sideStats || [];
+    const passesCompleted = sumStat(players, ["passes_completed", "passesCompleted"]);
+    const passesAttempted = sumStat(players, ["passes_attempted", "passesAttempted"]);
+    const distanceMeters = sumStat(players, ["distance_covered", "distanceCovered"]);
+    const ratingValues = players
+      .map((player) => playerRating10(player))
+      .filter((value) => Number.isFinite(value));
+
+    return {
+      goals: sumStat(players, ["goals"]),
+      shotsOnGoal: sumStat(players, ["shots_on_goal", "shotsOnGoal"]),
+      keyPasses: sumStat(players, ["key_passes", "keyPasses"]),
+      chancesCreated: sumStat(players, ["chances_created", "chancesCreated"]),
+      passesCompleted,
+      passAccuracy: passesAttempted > 0 ? (passesCompleted / passesAttempted) * 100 : 0,
+      interceptions: sumStat(players, ["interceptions"]),
+      tackles: sumStat(players, ["tackles", "sliding_tackles_completed", "slidingTacklesCompleted"]),
+      saves: sumStat(players, ["keeper_saves", "keeperSaves"]),
+      avgRating: ratingValues.length
+        ? ratingValues.reduce((sum, value) => sum + value, 0) / ratingValues.length
+        : 0,
+      distanceKm: distanceMeters / 1000
+    };
+  }
+
+  function comparisonRowHtml(label, homeValue, awayValue, options) {
+    const homeNum = Number(homeValue) || 0;
+    const awayNum = Number(awayValue) || 0;
+    const total = homeNum + awayNum;
+    const homePct = total > 0 ? (homeNum / total) * 100 : 50;
+    const awayPct = total > 0 ? (awayNum / total) * 100 : 50;
+    const decimals = options && Number.isFinite(options.decimals) ? options.decimals : 0;
+    const formatter = options && typeof options.formatter === "function"
+      ? options.formatter
+      : (value) => formatMetric(value, decimals);
+    const homeState = homeNum === awayNum ? "tied" : homeNum > awayNum ? "lead" : "trail";
+    const awayState = homeNum === awayNum ? "tied" : awayNum > homeNum ? "lead" : "trail";
+
+    return `
+      <div class="team-comparison-row">
+        <div class="team-comparison-values">
+          <span class="team-comparison-value home ${homeState}">${esc(formatter(homeNum))}</span>
+          <span class="team-comparison-label">${esc(label)}</span>
+          <span class="team-comparison-value away ${awayState}">${esc(formatter(awayNum))}</span>
+        </div>
+        <div class="team-comparison-bars">
+          <div class="team-comparison-bar home"><span style="width:${esc(homePct.toFixed(2))}%"></span></div>
+          <div class="team-comparison-bar away"><span style="width:${esc(awayPct.toFixed(2))}%"></span></div>
+        </div>
+      </div>
+    `;
+  }
+
+  function comparisonSectionHtml(homeTeamName, awayTeamName, homeStats, awayStats) {
+    const homeAgg = teamAggregateStats(homeStats);
+    const awayAgg = teamAggregateStats(awayStats);
+    const metrics = [
+      { label: "Goals", key: "goals" },
+      { label: "Shots on Goal", key: "shotsOnGoal" },
+      { label: "Passes Completed", key: "passesCompleted" },
+      { label: "Pass Accuracy", key: "passAccuracy", decimals: 1, formatter: (value) => `${formatMetric(value, 1)}%` },
+      { label: "Key Passes", key: "keyPasses" },
+      { label: "Chances Created", key: "chancesCreated" },
+      { label: "Interceptions", key: "interceptions" },
+      { label: "Tackles", key: "tackles" },
+      { label: "Saves", key: "saves" },
+      { label: "Distance", key: "distanceKm", decimals: 1, formatter: (value) => `${formatMetric(value, 1)} km` },
+      { label: "Avg Rating", key: "avgRating", decimals: 1 }
+    ];
+
+    return `
+      <section class="match-section team-comparison-panel">
+        <div class="match-section-head">
+          <div>
+            <div class="match-section-kicker">Team Statistics</div>
+            <h3>Matchup Comparison</h3>
+          </div>
+          <div class="match-section-note">${esc(homeTeamName || "Home")} vs ${esc(awayTeamName || "Away")}</div>
+        </div>
+        <div class="team-comparison-rows">
+          ${metrics.map((metric) => comparisonRowHtml(
+            metric.label,
+            homeAgg[metric.key],
+            awayAgg[metric.key],
+            metric
+          )).join("")}
+        </div>
+      </section>
+    `;
+  }
+
+  function eventCount(events, kind) {
+    return (events || []).reduce((sum, item) => {
+      if (!item || item.kind !== kind) return sum;
+      if (Array.isArray(item.minutes) && item.minutes.length) return sum + item.minutes.length;
+      return sum + Math.max(1, Number(item.count) || 0);
+    }, 0);
+  }
+
+  function eventSummaryCardHtml(teamName, sideLabel, events, side) {
+    const goals = eventCount(events, "goal");
+    const cards = eventCount(events, "yellow") + eventCount(events, "red");
+    const ownGoals = eventCount(events, "own_goal");
+    const topEvents = (events || []).slice(0, 9);
+
+    return `
+      <article class="match-story-side ${esc(side)}">
+        <div class="match-story-side-head">
+          <span class="match-story-kicker">${esc(sideLabel)}</span>
+          <strong>${esc(teamName || sideLabel)}</strong>
+        </div>
+        <div class="match-story-pills">
+          <span class="match-story-pill">${esc(goals)} G</span>
+          <span class="match-story-pill">${esc(cards)} Cards</span>
+          ${ownGoals > 0 ? `<span class="match-story-pill">${esc(ownGoals)} OG</span>` : ""}
+        </div>
+        <div class="match-story-events">
+          ${topEvents.length ? topEvents.map(eventLineHtml).join("") : '<div class="match-story-empty">No tracked events</div>'}
+        </div>
+      </article>
+    `;
+  }
+
+  function expandTimelineEvents(events, side) {
+    const items = [];
+    let order = 0;
+
+    for (const event of events || []) {
+      const minutes = Array.isArray(event.minutes) && event.minutes.length ? event.minutes : [null];
+      const rawRating = event ? event.rating : null;
+      const rating = rawRating === null || rawRating === undefined ? null : Number(rawRating);
+      for (const minute of minutes) {
+        const minuteNum = Number(minute);
+        items.push({
+          side,
+          kind: String(event.kind || "goal"),
+          name: String(event.name || "Unknown"),
+          minute: Number.isFinite(minuteNum) ? Math.max(1, Math.floor(minuteNum)) : null,
+          count: Number(event.count) || 1,
+          rating: Number.isFinite(rating) ? rating : null,
+          order: order++
+        });
+      }
+    }
+
+    return items;
+  }
+
+  function eventTimelineRowHtml(item) {
+    const meta = STAT_META[item.kind] || STAT_META.goal;
+    const minuteLabel = item.minute !== null ? `${item.minute}'` : meta.chip;
+    const extraLabel = item.minute === null && item.count > 1 ? ` x${item.count}` : "";
+    const ratingBadge = Number.isFinite(item.rating)
+      ? `<span class="event-map-rating">${esc(item.rating.toFixed(1))}</span>`
+      : "";
+    const body = `
+      <div class="event-map-event ${esc(item.side)} ${esc(item.kind)}">
+        <img class="event-map-icon" src="${esc(meta.icon)}" alt="${esc(meta.label)}">
+        <div class="event-map-text">
+          <strong>${esc(item.name)}</strong>
+          <span>${esc(meta.label)}${esc(extraLabel)}</span>
+        </div>
+        ${ratingBadge}
+      </div>
+    `;
+
+    return `
+      <div class="event-map-row ${esc(item.side)}">
+        <div class="event-map-lane home">${item.side === "home" ? body : ""}</div>
+        <div class="event-map-minute">${esc(minuteLabel)}</div>
+        <div class="event-map-lane away">${item.side === "away" ? body : ""}</div>
+      </div>
+    `;
+  }
+
+  function eventMapSectionHtml(homeTeamName, awayTeamName, homeEvents, awayEvents) {
+    const timeline = [...expandTimelineEvents(homeEvents, "home"), ...expandTimelineEvents(awayEvents, "away")]
+      .sort((a, b) => {
+        const minuteA = a.minute === null ? 999 : a.minute;
+        const minuteB = b.minute === null ? 999 : b.minute;
+        return minuteA - minuteB || a.order - b.order || a.name.localeCompare(b.name);
+      });
+
+    return `
+      <section class="match-section match-story-section">
+        <div class="match-section-head">
+          <div>
+            <div class="match-section-kicker">Event Map</div>
+            <h3>Match Flow</h3>
+          </div>
+          <div class="match-section-note">Moments are ordered by tracked event minute when available.</div>
+        </div>
+        <div class="match-story-grid">
+          ${eventSummaryCardHtml(homeTeamName, "Home Moments", homeEvents, "home")}
+          <article class="event-map-card">
+            <div class="event-map-track"></div>
+            <div class="event-map-list">
+              ${timeline.length ? timeline.map(eventTimelineRowHtml).join("") : '<div class="match-story-empty center">No tracked match events</div>'}
+            </div>
+          </article>
+          ${eventSummaryCardHtml(awayTeamName, "Away Moments", awayEvents, "away")}
+        </div>
+      </section>
+    `;
+  }
+
+  function derivedTeamCardHtml(teamName, side, values) {
+    return `
+      <article class="derived-team-card ${esc(side)}">
+        <div class="derived-team-head">
+          <span class="derived-team-kicker">${esc(side === "home" ? "Home" : "Away")}</span>
+          <strong>${esc(teamName || (side === "home" ? "Home" : "Away"))}</strong>
+        </div>
+        <div class="derived-team-metrics">
+          <div class="derived-metric-tile">
+            <span>S/Sub/B</span>
+            <strong>${esc(values.starts)}/${esc(values.subs)}/${esc(values.bench)}</strong>
+          </div>
+          <div class="derived-metric-tile">
+            <span>Clutch</span>
+            <strong>${esc(values.clutch)}</strong>
+          </div>
+          <div class="derived-metric-tile">
+            <span>Sub Impact</span>
+            <strong>${esc(values.subImpactEvents)}</strong>
+          </div>
+          <div class="derived-metric-tile">
+            <span>Sub G / OG</span>
+            <strong>${esc(values.subGoals)}/${esc(values.subOwnGoals)}</strong>
+          </div>
+        </div>
+      </article>
+    `;
+  }
+
+  function derivedContextHtml(homeTeamName, awayTeamName, homeDerived, awayDerived) {
+    return `
+      <section class="match-section derived-widget">
+        <div class="match-section-head">
+          <div>
+            <div class="match-section-kicker">Match Context</div>
+            <h3>Derived Metrics</h3>
+          </div>
+          <div class="match-section-note">Late actions and substitution effects pulled from tracked player events.</div>
+        </div>
+        <div class="match-context-grid">
+          ${derivedTeamCardHtml(homeTeamName, "home", homeDerived)}
+          ${derivedTeamCardHtml(awayTeamName, "away", awayDerived)}
+        </div>
+      </section>
+    `;
+  }
+
   function attachEventRatings(items, sideStats) {
     const byName = new Map();
     for (const player of sideStats || []) {
@@ -743,37 +1007,30 @@
             </div>
           </div>
 
-          ${hasEvents ? `
-          <div class="match-events-wrap">
-            <div class="match-events-grid">
-              <div class="match-events">${homeEvents.map(eventLineHtml).join("")}</div>
-              <div class="match-events">${awayEvents.map(eventLineHtml).join("")}</div>
-            </div>
-          </div>
-          ` : ""}
-
           <div class="match-bottom-meta">${esc(matchDate)}</div>
         </section>
 
+        ${hasEvents ? eventMapSectionHtml(
+          match.home_team_name || "Home",
+          match.away_team_name || "Away",
+          homeEvents,
+          awayEvents
+        ) : ""}
+
+        ${comparisonSectionHtml(
+          match.home_team_name || "Home",
+          match.away_team_name || "Away",
+          homeStats,
+          awayStats
+        )}
+
         ${showDerived ? `
-        <section class="derived-widget">
-          <div class="derived-title">Derived Metrics</div>
-          <div class="derived-subtitle">S/Sub/B = Started/Substitute/Bench, Clutch = decisive late actions, Sub impact = events right after substitutions.</div>
-          <div class="match-events-grid">
-            <div class="match-events">
-              <div class="match-event-line"><span><strong>${esc((match.home_team_name || "Home") + ((match.home_team_name || "") === (match.away_team_name || "") ? " (Home)" : ""))}</strong></span></div>
-              <div class="match-event-line"><span>S/Sub/B: ${esc(homeDerived.starts)}/${esc(homeDerived.subs)}/${esc(homeDerived.bench)}</span></div>
-              <div class="match-event-line"><span>Clutch: ${esc(homeDerived.clutch)} | Sub impact: ${esc(homeDerived.subImpactEvents)}</span></div>
-              <div class="match-event-line"><span>Sub G/OG: ${esc(homeDerived.subGoals)}/${esc(homeDerived.subOwnGoals)}</span></div>
-            </div>
-            <div class="match-events">
-              <div class="match-event-line"><span><strong>${esc((match.away_team_name || "Away") + ((match.home_team_name || "") === (match.away_team_name || "") ? " (Away)" : ""))}</strong></span></div>
-              <div class="match-event-line"><span>S/Sub/B: ${esc(awayDerived.starts)}/${esc(awayDerived.subs)}/${esc(awayDerived.bench)}</span></div>
-              <div class="match-event-line"><span>Clutch: ${esc(awayDerived.clutch)} | Sub impact: ${esc(awayDerived.subImpactEvents)}</span></div>
-              <div class="match-event-line"><span>Sub G/OG: ${esc(awayDerived.subGoals)}/${esc(awayDerived.subOwnGoals)}</span></div>
-            </div>
-          </div>
-        </section>
+        ${derivedContextHtml(
+          match.home_team_name || "Home",
+          match.away_team_name || "Away",
+          homeDerived,
+          awayDerived
+        )}
         ` : ""}
 
         ${mvpWidgetHtml(mvp)}
