@@ -20,6 +20,7 @@
     error: "",
   };
   let comparisonRequestId = 0;
+  let pickerInputTimer = 0;
 
   bootstrap();
 
@@ -127,9 +128,28 @@
   }
 
   function updateSelection(nextState) {
+    clearPickerTimer();
     state = { ...state, ...nextState };
     syncStateToUrl();
     loadComparison();
+  }
+
+  function clearPickerTimer() {
+    if (pickerInputTimer) {
+      window.clearTimeout(pickerInputTimer);
+      pickerInputTimer = 0;
+    }
+  }
+
+  function scoreTeamSearch(team, query) {
+    if (!query) return 0;
+    const name = String(team.name || "").toLowerCase();
+    const captain = String(team.captainName || "").toLowerCase();
+    if (name.startsWith(query)) return 300;
+    if (name.includes(query)) return 220;
+    if (captain.startsWith(query)) return 140;
+    if (captain.includes(query)) return 90;
+    return -1;
   }
 
   function searchResults(which) {
@@ -137,8 +157,11 @@
     const excludeId = which === "team1" ? state.team2 : state.team1;
     const teams = allTeams
       .filter((team) => team.id !== excludeId)
-      .filter((team) => !query || `${team.name} ${team.captainName}`.toLowerCase().includes(query))
-      .slice(0, 8);
+      .map((team) => ({ team, score: scoreTeamSearch(team, query) }))
+      .filter((item) => !query || item.score >= 0)
+      .sort((left, right) => right.score - left.score || left.team.name.localeCompare(right.team.name))
+      .slice(0, 24)
+      .map((item) => item.team);
     return teams;
   }
 
@@ -331,7 +354,7 @@
     `;
   }
 
-  function render() {
+  function render(restoreFocus) {
     syncStateToUrl();
     const team1 = getTeamById(state.team1);
     const team2 = getTeamById(state.team2);
@@ -364,26 +387,48 @@
     `;
 
     bindEvents();
+
+    if (restoreFocus && restoreFocus.id) {
+      const target = byId(restoreFocus.id);
+      if (target) {
+        target.focus({ preventScroll: true });
+        if (typeof restoreFocus.start === "number" && typeof restoreFocus.end === "number" && typeof target.setSelectionRange === "function") {
+          target.setSelectionRange(restoreFocus.start, restoreFocus.end);
+        }
+      }
+    }
   }
 
   function bindEvents() {
     ["team1", "team2"].forEach((which) => {
       const input = byId(`${which}-search`);
       if (input) {
-        input.addEventListener("focus", () => {
+        input.addEventListener("focus", (event) => {
           activePicker = which;
-          render();
+          render({
+            id: `${which}-search`,
+            start: event.target.selectionStart,
+            end: event.target.selectionEnd,
+          });
         });
         input.addEventListener("input", (event) => {
+          clearPickerTimer();
           pickerInputs[which] = String(event.target.value || "");
           activePicker = which;
           if (state[which] && getTeamById(state[which])?.name !== pickerInputs[which]) {
             state[which] = "";
             syncStateToUrl();
           }
-          render();
+          pickerInputTimer = window.setTimeout(() => {
+            render({
+              id: `${which}-search`,
+              start: event.target.selectionStart,
+              end: event.target.selectionEnd,
+            });
+          }, 120);
         });
         input.addEventListener("blur", () => {
+          clearPickerTimer();
           window.setTimeout(() => {
             if (activePicker === which) {
               activePicker = "";
@@ -411,6 +456,7 @@
       button.addEventListener("click", () => {
         const which = button.getAttribute("data-clear-picker") || "";
         if (!which) return;
+        clearPickerTimer();
         pickerInputs[which] = "";
         activePicker = which;
         state[which] = "";
@@ -427,9 +473,7 @@
       button.addEventListener("click", () => {
         const which = button.getAttribute("data-open-picker") || "";
         activePicker = which;
-        render();
-        const input = byId(`${which}-search`);
-        if (input) input.focus();
+        render({ id: `${which}-search`, start: 0, end: pickerInputs[which]?.length || 0 });
       });
     });
 

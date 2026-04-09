@@ -36,6 +36,7 @@
   let roleOptions = [];
   let teamOptions = [];
   let state = readState();
+  let searchInputTimer = 0;
 
   renderLoading();
 
@@ -332,13 +333,13 @@
     `;
   }
 
-  function playerCard(player, index) {
+  function playerCard(player, index, instant) {
     const steamLabel = player.steamName && player.steamName !== player.name ? player.steamName : player.steam_id;
     const registeredLabel = player.registered_at ? fmtDate(player.registered_at) : "N/A";
     const lastSeenLabel = player.lastMatchAt ? fmtDate(player.lastMatchAt) : "N/A";
 
     return `
-      <article class="player-browser-card role-${esc(player.roleKey)}" style="--card-index:${index};">
+      <article class="player-browser-card role-${esc(player.roleKey)}${instant ? " instant" : ""}" style="--card-index:${index};">
         <div class="player-browser-glow"></div>
         <div class="player-browser-top">
           ${formatActivityPill(player)}
@@ -359,7 +360,6 @@
             </div>
             <div class="player-browser-tags">
               <span class="player-browser-tag position">${esc(player.position)}</span>
-              <span class="player-browser-tag role-${esc(player.roleKey)}">${esc(player.roleLabel)}</span>
               ${teamBadge(player)}
             </div>
             <div class="player-browser-stats">
@@ -392,9 +392,9 @@
     `;
   }
 
-  function playerListRow(player, index) {
+  function playerListRow(player, index, instant) {
     return `
-      <article class="player-list-row role-${esc(player.roleKey)}" style="--card-index:${index};">
+      <article class="player-list-row role-${esc(player.roleKey)}${instant ? " instant" : ""}" style="--card-index:${index};">
         <div class="player-list-main">
           <img class="player-list-avatar" src="${esc(player.display_avatar_url || player.steam_avatar_url || player.avatar_url || player.avatar_fallback_url || fallbackAvatar)}" alt="${esc(player.name)}" onerror="this.onerror=null;this.src='${fallbackAvatar}';">
           <div class="player-list-text">
@@ -416,6 +416,7 @@
   }
 
   function renderLoading() {
+    clearSearchTimer();
     page.innerHTML = `
       <section class="players-browser">
         <div class="players-toolbar players-loading-shell">
@@ -438,7 +439,15 @@
     `;
   }
 
-  function render(restoreFocus) {
+  function clearSearchTimer() {
+    if (searchInputTimer) {
+      window.clearTimeout(searchInputTimer);
+      searchInputTimer = 0;
+    }
+  }
+
+  function render(restoreFocus, options) {
+    const instant = Boolean(options && options.instant);
     syncStateToUrl();
     const players = filteredPlayers();
     const metrics = summaryMetrics(players);
@@ -545,8 +554,8 @@
 
         ${players.length ? (
           state.view === "grid"
-            ? `<div class="players-card-grid">${players.map((player, index) => playerCard(player, index)).join("")}</div>`
-            : `<div class="players-list">${players.map((player, index) => playerListRow(player, index)).join("")}</div>`
+            ? `<div class="players-card-grid">${players.map((player, index) => playerCard(player, index, instant)).join("")}</div>`
+            : `<div class="players-list">${players.map((player, index) => playerListRow(player, index, instant)).join("")}</div>`
         ) : `
           <div class="players-empty-state">
             <div class="players-empty-icon">&#9906;</div>
@@ -570,9 +579,18 @@
     }
   }
 
-  function updateState(nextState, restoreFocus) {
+  function updateState(nextState, restoreFocus, options) {
+    clearSearchTimer();
     state = { ...state, ...nextState };
-    render(restoreFocus);
+    render(restoreFocus, options);
+  }
+
+  function scheduleSearchUpdate(value, restoreFocus) {
+    clearSearchTimer();
+    state = { ...state, search: value };
+    searchInputTimer = window.setTimeout(() => {
+      render(restoreFocus, { instant: true });
+    }, 120);
   }
 
   function clearFilter(key) {
@@ -591,8 +609,8 @@
     const search = byId("players-search");
     if (search) {
       search.addEventListener("input", (event) => {
-        updateState(
-          { search: String(event.target.value || "").trimStart() },
+        scheduleSearchUpdate(
+          String(event.target.value || "").trimStart(),
           {
             id: "players-search",
             start: event.target.selectionStart,
@@ -604,7 +622,7 @@
 
     const clearSearch = byId("players-search-clear");
     if (clearSearch) {
-      clearSearch.addEventListener("click", () => updateState({ search: "" }));
+      clearSearch.addEventListener("click", () => updateState({ search: "" }, { id: "players-search", start: 0, end: 0 }, { instant: true }));
     }
 
     const sort = byId("players-sort");
@@ -643,6 +661,7 @@
     const reset = byId("players-reset");
     if (reset) {
       reset.addEventListener("click", () => {
+        clearSearchTimer();
         state = { ...DEFAULT_STATE };
         render();
       });

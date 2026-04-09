@@ -26,6 +26,7 @@
   let teamOptions = [];
   let formatOptions = [];
   let state = readState();
+  let searchInputTimer = 0;
 
   renderLoading();
 
@@ -237,10 +238,10 @@
     return match.tournamentName || "Independent Match";
   }
 
-  function matchCard(match, index) {
+  function matchCard(match, index, instant) {
     const scoreline = `${match.homeScore} - ${match.awayScore}`;
     return `
-      <article class="match-browser-card" style="--card-index:${index};">
+      <article class="match-browser-card${instant ? " instant" : ""}" style="--card-index:${index};">
         <div class="match-browser-glow"></div>
         <div class="match-browser-top">
           <div class="match-browser-date">
@@ -275,9 +276,9 @@
     `;
   }
 
-  function matchListRow(match, index) {
+  function matchListRow(match, index, instant) {
     return `
-      <article class="match-list-row" style="--card-index:${index};">
+      <article class="match-list-row${instant ? " instant" : ""}" style="--card-index:${index};">
         <div class="match-list-main">
           <a class="match-list-link" href="match.html?id=${encodeURIComponent(match.id)}">
             <span class="match-list-team home">${esc(match.homeTeamName)}</span>
@@ -295,6 +296,7 @@
   }
 
   function renderLoading() {
+    clearSearchTimer();
     page.innerHTML = `
       <section class="matches-browser">
         <div class="matches-toolbar players-loading-shell">
@@ -317,7 +319,15 @@
     `;
   }
 
-  function render(restoreFocus) {
+  function clearSearchTimer() {
+    if (searchInputTimer) {
+      window.clearTimeout(searchInputTimer);
+      searchInputTimer = 0;
+    }
+  }
+
+  function render(restoreFocus, options) {
+    const instant = Boolean(options && options.instant);
     syncStateToUrl();
     const matches = filteredMatches();
     const metrics = summaryMetrics(matches);
@@ -448,8 +458,8 @@
 
         ${matches.length ? (
           state.view === "grid"
-            ? `<div class="matches-card-grid">${matches.map((match, index) => matchCard(match, index)).join("")}</div>`
-            : `<div class="matches-list">${matches.map((match, index) => matchListRow(match, index)).join("")}</div>`
+            ? `<div class="matches-card-grid">${matches.map((match, index) => matchCard(match, index, instant)).join("")}</div>`
+            : `<div class="matches-list">${matches.map((match, index) => matchListRow(match, index, instant)).join("")}</div>`
         ) : `
           <div class="players-empty-state">
             <div class="players-empty-icon">&#9906;</div>
@@ -473,9 +483,18 @@
     }
   }
 
-  function updateState(nextState, restoreFocus) {
+  function updateState(nextState, restoreFocus, options) {
+    clearSearchTimer();
     state = { ...state, ...nextState };
-    render(restoreFocus);
+    render(restoreFocus, options);
+  }
+
+  function scheduleSearchUpdate(value, restoreFocus) {
+    clearSearchTimer();
+    state = { ...state, search: value };
+    searchInputTimer = window.setTimeout(() => {
+      render(restoreFocus, { instant: true });
+    }, 120);
   }
 
   function bindSelect(id, key) {
@@ -489,8 +508,8 @@
     const search = byId("matches-search");
     if (search) {
       search.addEventListener("input", (event) => {
-        updateState(
-          { search: String(event.target.value || "").trimStart() },
+        scheduleSearchUpdate(
+          String(event.target.value || "").trimStart(),
           {
             id: "matches-search",
             start: event.target.selectionStart,
@@ -501,7 +520,7 @@
     }
 
     const clearSearch = byId("matches-search-clear");
-    if (clearSearch) clearSearch.addEventListener("click", () => updateState({ search: "" }));
+    if (clearSearch) clearSearch.addEventListener("click", () => updateState({ search: "" }, { id: "matches-search", start: 0, end: 0 }, { instant: true }));
 
     bindSelect("matches-sort", "sort");
     bindSelect("matches-format", "format");
@@ -520,6 +539,7 @@
     const reset = byId("matches-reset");
     if (reset) {
       reset.addEventListener("click", () => {
+        clearSearchTimer();
         state = { ...DEFAULT_STATE };
         render();
       });

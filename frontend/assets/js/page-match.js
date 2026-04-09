@@ -54,7 +54,25 @@
   }
 
   function safeName(player) {
-    return String(player && (player.player_name || player.steam_id) || "Unknown");
+    return String(player && (player.player_name || player.name || player.discord_name || player.steam_id) || "Unknown");
+  }
+
+  function safePosition(player) {
+    return String(player && (player.position || player.pos || player.slot) || "N/A").toUpperCase() || "N/A";
+  }
+
+  function hasTrackedStats(player) {
+    if (!player || typeof player !== "object") return false;
+    const numericKeys = [
+      "goals", "assists", "shots_on_goal", "passes_completed", "passes_attempted",
+      "interceptions", "tackles", "sliding_tackles_completed", "keeper_saves",
+      "keeper_saves_caught", "yellow_cards", "red_cards", "chances_created",
+      "key_passes", "match_rating", "mvp_score"
+    ];
+    if (numericKeys.some((key) => Number(player[key]) > 0)) return true;
+    const eventMap = player.event_timestamps ?? player.eventTimestamps;
+    if (eventMap && typeof eventMap === "object" && Object.keys(eventMap).length > 0) return true;
+    return false;
   }
 
   function mvpIdentity(mvp) {
@@ -405,7 +423,7 @@
     const awayState = homeNum === awayNum ? "tied" : awayNum > homeNum ? "lead" : "trail";
 
     return `
-      <div class="team-comparison-row">
+      <div class="team-comparison-row home-${homeState} away-${awayState}">
         <div class="team-comparison-values">
           <span class="team-comparison-value home ${homeState}">${esc(formatter(homeNum))}</span>
           <span class="team-comparison-label">${esc(label)}</span>
@@ -465,30 +483,6 @@
     }, 0);
   }
 
-  function eventSummaryCardHtml(teamName, sideLabel, events, side) {
-    const goals = eventCount(events, "goal");
-    const cards = eventCount(events, "yellow") + eventCount(events, "red");
-    const ownGoals = eventCount(events, "own_goal");
-    const topEvents = (events || []).slice(0, 9);
-
-    return `
-      <article class="match-story-side ${esc(side)}">
-        <div class="match-story-side-head">
-          <span class="match-story-kicker">${esc(sideLabel)}</span>
-          <strong>${esc(teamName || sideLabel)}</strong>
-        </div>
-        <div class="match-story-pills">
-          <span class="match-story-pill">${esc(goals)} G</span>
-          <span class="match-story-pill">${esc(cards)} Cards</span>
-          ${ownGoals > 0 ? `<span class="match-story-pill">${esc(ownGoals)} OG</span>` : ""}
-        </div>
-        <div class="match-story-events">
-          ${topEvents.length ? topEvents.map(eventLineHtml).join("") : '<div class="match-story-empty">No tracked events</div>'}
-        </div>
-      </article>
-    `;
-  }
-
   function expandTimelineEvents(events, side) {
     const items = [];
     let order = 0;
@@ -514,34 +508,52 @@
     return items;
   }
 
-  function eventTimelineRowHtml(item) {
+  function eventTimelineCardHtml(item) {
     const meta = STAT_META[item.kind] || STAT_META.goal;
     const minuteLabel = item.minute !== null ? `${item.minute}'` : meta.chip;
     const extraLabel = item.minute === null && item.count > 1 ? ` x${item.count}` : "";
     const ratingBadge = Number.isFinite(item.rating)
       ? `<span class="event-map-rating">${esc(item.rating.toFixed(1))}</span>`
       : "";
-    const body = `
-      <div class="event-map-event ${esc(item.side)} ${esc(item.kind)}">
-        <img class="event-map-icon" src="${esc(meta.icon)}" alt="${esc(meta.label)}">
-        <div class="event-map-text">
-          <strong>${esc(item.name)}</strong>
-          <span>${esc(meta.label)}${esc(extraLabel)}</span>
-        </div>
-        ${ratingBadge}
-      </div>
-    `;
 
     return `
-      <div class="event-map-row ${esc(item.side)}">
-        <div class="event-map-lane home">${item.side === "home" ? body : ""}</div>
-        <div class="event-map-minute">${esc(minuteLabel)}</div>
-        <div class="event-map-lane away">${item.side === "away" ? body : ""}</div>
+      <article class="event-map-card-item ${esc(item.side)} ${esc(item.kind)}">
+        <div class="event-map-card-top">
+          <span class="event-map-side ${esc(item.side)}">${esc(item.side === "home" ? "Home" : "Away")}</span>
+          <span class="event-map-minute">${esc(minuteLabel)}</span>
+        </div>
+        <div class="event-map-card-body">
+          <img class="event-map-icon" src="${esc(meta.icon)}" alt="${esc(meta.label)}">
+          <div class="event-map-text">
+            <strong>${esc(item.name)}</strong>
+            <span>${esc(meta.label)}${esc(extraLabel)}</span>
+          </div>
+          ${ratingBadge}
+        </div>
+      </article>
+    `;
+  }
+
+  function teamEventSummaryHtml(teamName, teamIcon, events, side, goalValue) {
+    const goals = Number.isFinite(Number(goalValue)) ? Math.max(0, Math.round(Number(goalValue))) : eventCount(events, "goal");
+    const cards = eventCount(events, "yellow") + eventCount(events, "red");
+    const ownGoals = eventCount(events, "own_goal");
+    const fallbackIcon = /iosca/i.test(String(teamName || "")) ? "assets/icons/iosca-icon.png" : "";
+    const icon = String(teamIcon || "").trim() || fallbackIcon;
+
+    return `
+      <div class="match-side-event-summary ${esc(side)}">
+        ${icon ? `<img class="match-side-event-logo" src="${esc(icon)}" alt="${esc(teamName || side)}">` : ""}
+        <div class="match-side-event-counts">
+          <span class="match-side-event-pill">${esc(goals)} Goals</span>
+          <span class="match-side-event-pill">${esc(cards)} Cards</span>
+          ${ownGoals > 0 ? `<span class="match-side-event-pill subtle">${esc(ownGoals)} OG</span>` : ""}
+        </div>
       </div>
     `;
   }
 
-  function eventMapSectionHtml(homeTeamName, awayTeamName, homeEvents, awayEvents) {
+  function eventMapSectionHtml(homeEvents, awayEvents) {
     const timeline = [...expandTimelineEvents(homeEvents, "home"), ...expandTimelineEvents(awayEvents, "away")]
       .sort((a, b) => {
         const minuteA = a.minute === null ? 999 : a.minute;
@@ -556,17 +568,10 @@
             <div class="match-section-kicker">Event Map</div>
             <h3>Match Flow</h3>
           </div>
-          <div class="match-section-note">Moments are ordered by tracked event minute when available.</div>
+          <div class="match-section-note">Goals and cards are shown left to right in minute order.</div>
         </div>
-        <div class="match-story-grid">
-          ${eventSummaryCardHtml(homeTeamName, "Home Moments", homeEvents, "home")}
-          <article class="event-map-card">
-            <div class="event-map-track"></div>
-            <div class="event-map-list">
-              ${timeline.length ? timeline.map(eventTimelineRowHtml).join("") : '<div class="match-story-empty center">No tracked match events</div>'}
-            </div>
-          </article>
-          ${eventSummaryCardHtml(awayTeamName, "Away Moments", awayEvents, "away")}
+        <div class="event-map-horizontal-shell">
+          ${timeline.length ? timeline.map(eventTimelineCardHtml).join("") : '<div class="match-story-empty center">No tracked match events</div>'}
         </div>
       </section>
     `;
@@ -697,9 +702,11 @@
     return `<div class="pitch-player-stats">${chips.join("")}</div>`;
   }
 
-  function playerHoverCardHtml(player, profileSteamId) {
-    if (!player) return "";
-    const rating = playerRating10(player);
+  function playerHoverCardHtml(player, profileSteamId, fallbackMeta) {
+    if (!player && !fallbackMeta) return "";
+    const source = player || fallbackMeta || {};
+    const tracked = hasTrackedStats(player);
+    const rating = tracked ? playerRating10(player) : null;
     const goals = pickNum(player, ["goals"]);
     const assists = pickNum(player, ["assists"]);
     const shotsOnGoal = pickNum(player, ["shots_on_goal", "shotsOnGoal"]);
@@ -711,12 +718,15 @@
     const yellows = pickNum(player, ["yellow_cards", "yellowCards"]);
     const reds = pickNum(player, ["red_cards", "redCards"]);
     const passAcc = passesAttempted > 0 ? `${((passesCompleted / passesAttempted) * 100).toFixed(1)}%` : "0.0%";
+    const summaryLine = tracked
+      ? ""
+      : '<div class="pitch-hover-note">No tracked stat row for this lineup entry.</div>';
 
     return `
       <div class="pitch-hover-card">
         <div class="pitch-hover-head">
-          <strong>${esc(safeName(player))}</strong>
-          <span>${esc(String(player.position || "").toUpperCase() || "N/A")} | ${esc(rating.toFixed(1))}</span>
+          <strong>${esc(safeName(source))}</strong>
+          <span>${esc(safePosition(source))}${Number.isFinite(rating) ? ` | ${esc(rating.toFixed(1))}` : ""}</span>
         </div>
         <div class="pitch-hover-grid">
           <span>Goals: <b>${esc(goals)}</b></span>
@@ -728,6 +738,7 @@
           <span>Saves: <b>${esc(saves)}</b></span>
           <span>Cards: <b>${esc(yellows)}Y / ${esc(reds)}R</b></span>
         </div>
+        ${summaryLine}
         ${profileSteamId ? '<div class="pitch-hover-foot">Click name to open full player profile</div>' : ""}
       </div>
     `;
@@ -797,7 +808,7 @@
           <div class="pitch-jersey">${esc(entry.pos || slot.pos)}</div>
           <div class="pitch-player-name">${isMvp ? '<span class="mvp-badge" title="MVP">🏆</span>' : ""}${nameNode}</div>
           ${playerStatChips(stats)}
-          ${playerHoverCardHtml(stats || entry, profileSteamId)}
+          ${playerHoverCardHtml(stats, profileSteamId, entry)}
         </div>
       `;
     }).join("");
@@ -990,6 +1001,7 @@
             <div class="match-side">
               ${teamLogo(match.home_team_icon, match.home_team_name || "Home")}
               <h2 class="match-team-name">${esc(match.home_team_name || "Home")}</h2>
+              ${teamEventSummaryHtml(match.home_team_name || "Home", match.home_team_icon, homeEvents, "home", match.home_score)}
             </div>
 
             <div class="match-score">
@@ -1004,18 +1016,14 @@
             <div class="match-side">
               ${teamLogo(match.away_team_icon, match.away_team_name || "Away")}
               <h2 class="match-team-name">${esc(match.away_team_name || "Away")}</h2>
+              ${teamEventSummaryHtml(match.away_team_name || "Away", match.away_team_icon, awayEvents, "away", match.away_score)}
             </div>
           </div>
 
           <div class="match-bottom-meta">${esc(matchDate)}</div>
         </section>
 
-        ${hasEvents ? eventMapSectionHtml(
-          match.home_team_name || "Home",
-          match.away_team_name || "Away",
-          homeEvents,
-          awayEvents
-        ) : ""}
+        ${hasEvents ? eventMapSectionHtml(homeEvents, awayEvents) : ""}
 
         ${comparisonSectionHtml(
           match.home_team_name || "Home",

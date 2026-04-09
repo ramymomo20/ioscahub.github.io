@@ -460,6 +460,12 @@
   function setTarget(location) {
     if (!isValidTarget(location, state.format)) return;
     state.target = location;
+    if (location.type === "slot") {
+      const slot = currentFormat().slots.find((item) => item.id === location.id);
+      if (slot && ROLE_FILTERS.includes(slot.role)) {
+        state.roleFilter = slot.role;
+      }
+    }
     saveState();
     render();
   }
