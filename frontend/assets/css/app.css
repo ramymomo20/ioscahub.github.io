@@ -873,46 +873,61 @@ tbody tr:hover {
 
 .match-side-event-summary {
   display: grid;
-  justify-items: center;
-  gap: 6px;
+  justify-items: stretch;
+  gap: 8px;
   width: 100%;
+  margin-top: 16px;
 }
 
-.match-side-event-counts {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
+.match-side-event-list {
+  display: grid;
   gap: 8px;
 }
 
-.match-side-event-pill {
+.match-side-event-row {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  min-height: 22px;
+}
+
+.match-side-event-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 32px;
-  padding: 6px 12px;
-  border-radius: 999px;
-  border: 1px solid rgba(136, 181, 255, 0.18);
-  background: rgba(9, 20, 40, 0.9);
-  color: #eff7ff;
-  font-size: 0.82rem;
-  font-weight: 800;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  width: 18px;
+  height: 18px;
 }
 
-.match-side-event-summary.home .match-side-event-pill {
-  border-color: rgba(124, 242, 255, 0.28);
-  background: linear-gradient(180deg, rgba(18, 47, 74, 0.82), rgba(8, 19, 38, 0.94));
+.match-side-event-icon img {
+  width: 14px;
+  height: 14px;
+  object-fit: contain;
 }
 
-.match-side-event-summary.away .match-side-event-pill {
-  border-color: rgba(125, 240, 195, 0.28);
-  background: linear-gradient(180deg, rgba(18, 52, 45, 0.82), rgba(8, 19, 38, 0.94));
+.match-side-event-text {
+  color: #eaf4ff;
+  font-size: 0.9rem;
+  line-height: 1.3;
 }
 
-.match-side-event-pill.subtle {
-  color: #bed4f3;
+.match-side-event-row.yellow .match-side-event-text {
+  color: #ffe17a;
+}
+
+.match-side-event-row.red .match-side-event-text {
+  color: #ff9d9d;
+}
+
+.match-side-event-row.own_goal .match-side-event-text {
+  color: #ffbf86;
+}
+
+.match-side-event-empty {
+  color: #9bb3d3;
+  font-size: 0.88rem;
+  line-height: 1.35;
 }
 
 .event-map-flow-strip {
@@ -1572,15 +1587,25 @@ tbody tr:hover {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 15px;
-  height: 15px;
-  font-size: 0.72rem;
-  filter: drop-shadow(0 0 5px rgba(255, 213, 87, 0.78));
+  width: 18px;
+  height: 18px;
+  font-size: 0.92rem;
+  filter: drop-shadow(0 0 7px rgba(255, 213, 87, 0.88));
+}
+
+.pitch-player.is-mvp .pitch-jersey {
+  border-color: rgba(255, 220, 114, 0.9);
+  box-shadow:
+    0 0 0 3px rgba(255, 220, 114, 0.24),
+    0 0 22px rgba(255, 220, 114, 0.42);
 }
 
 .pitch-player.is-mvp .pitch-player-name {
   border-color: rgba(255, 214, 102, 0.75);
-  box-shadow: 0 0 12px rgba(255, 214, 102, 0.35);
+  box-shadow:
+    0 0 0 3px rgba(255, 214, 102, 0.18),
+    0 0 16px rgba(255, 214, 102, 0.42);
+  color: #fff6bf;
 }
 
 .pitch-player:hover .pitch-jersey {

@@ -531,16 +531,46 @@
   }
 
   function teamEventSummaryHtml(teamName, teamIcon, events, side, goalValue) {
-    const goals = Number.isFinite(Number(goalValue)) ? Math.max(0, Math.round(Number(goalValue))) : eventCount(events, "goal");
-    const cards = eventCount(events, "yellow") + eventCount(events, "red");
-    const ownGoals = eventCount(events, "own_goal");
+    const metaOrder = { goal: 0, own_goal: 1, yellow: 2, red: 3 };
+    const rows = (events || [])
+      .filter((item) => ["goal", "own_goal", "yellow", "red"].includes(String(item.kind || "")))
+      .slice()
+      .sort((left, right) => {
+        const leftKind = metaOrder[String(left.kind || "")] ?? 99;
+        const rightKind = metaOrder[String(right.kind || "")] ?? 99;
+        if (leftKind !== rightKind) return leftKind - rightKind;
+        const leftMinute = Array.isArray(left.minutes) && left.minutes.length ? Number(left.minutes[0]) : 999;
+        const rightMinute = Array.isArray(right.minutes) && right.minutes.length ? Number(right.minutes[0]) : 999;
+        return leftMinute - rightMinute;
+      })
+      .map((item) => {
+        const meta = STAT_META[item.kind] || STAT_META.goal;
+        const minuteText = Array.isArray(item.minutes) && item.minutes.length
+          ? item.minutes.map((minute) => `${minute}'`).join(", ")
+          : (Number(item.count) > 1 ? `x${item.count}` : "");
+        return `
+          <div class="match-side-event-row ${esc(item.kind)}">
+            <span class="match-side-event-icon">
+              <img src="${esc(meta.icon)}" alt="${esc(meta.label)}">
+            </span>
+            <span class="match-side-event-text">${esc(item.name || meta.label)}${minuteText ? ` ${esc(minuteText)}` : ""}</span>
+          </div>
+        `;
+      });
+
+    if (!rows.length) {
+      const goals = Number.isFinite(Number(goalValue)) ? Math.max(0, Math.round(Number(goalValue))) : eventCount(events, "goal");
+      return `
+        <div class="match-side-event-summary ${esc(side)}">
+          <div class="match-side-event-empty">${goals > 0 ? `${esc(goals)} goal${goals === 1 ? "" : "s"} tracked without player timestamps` : "No tracked key events"}</div>
+        </div>
+      `;
+    }
 
     return `
       <div class="match-side-event-summary ${esc(side)}">
-        <div class="match-side-event-counts">
-          <span class="match-side-event-pill">${esc(goals)} Goals</span>
-          <span class="match-side-event-pill">${esc(cards)} Cards</span>
-          ${ownGoals > 0 ? `<span class="match-side-event-pill subtle">${esc(ownGoals)} OG</span>` : ""}
+        <div class="match-side-event-list">
+          ${rows.join("")}
         </div>
       </div>
     `;
@@ -813,7 +843,7 @@
         <div class="pitch-player ${isMvp ? "is-mvp" : ""} ${hoverClasses.join(" ")}" style="left:${slot.x}%;top:${slot.y}%;">
           ${Number.isFinite(rating) ? `<div class="pitch-rating-chip">${esc(rating.toFixed(1))}</div>` : ""}
           <div class="pitch-jersey">${esc(entry.pos || slot.pos)}</div>
-          <div class="pitch-player-name">${isMvp ? '<span class="mvp-badge" title="MVP">MVP</span>' : ""}${nameNode}</div>
+          <div class="pitch-player-name">${isMvp ? '<span class="mvp-badge" title="MVP">🏆</span>' : ""}${nameNode}</div>
           ${playerStatChips(stats)}
           ${playerHoverCardHtml(stats, profileSteamId, entry)}
         </div>
@@ -958,7 +988,7 @@
           </div>
           <div class="mvp-rating">${esc(rating.toFixed(1))}/10</div>
         </div>
-        <div class="mvp-name"><span class="mvp-name-emoji">MVP</span>${esc(playerName)}</div>
+        <div class="mvp-name"><span class="mvp-name-emoji" title="MVP">🏆</span>${esc(playerName)}</div>
         <div class="mvp-sub">${esc(position)}</div>
         <div class="mvp-reason">${esc(mvpReason(mvp))}</div>
         <div class="mvp-stats-grid">${statsHtml}</div>
