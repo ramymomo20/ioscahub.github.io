@@ -1,4 +1,4 @@
-﻿(function () {
+(function () {
   function byId(id) { return document.getElementById(id); }
 
   function esc(value) {
@@ -26,33 +26,210 @@
     });
   }
 
+  function hashString(value) {
+    const input = String(value || 'iosca');
+    let hash = 0;
+    for (let i = 0; i < input.length; i += 1) {
+      hash = ((hash << 5) - hash) + input.charCodeAt(i);
+      hash |= 0;
+    }
+    return Math.abs(hash);
+  }
+
+  function teamTheme(seed) {
+    const hash = hashString(seed);
+    const hue = hash % 360;
+    const accent = `hsl(${hue} 78% 60%)`;
+    const accentStrong = `hsl(${hue} 84% 54%)`;
+    const accentSoft = `hsla(${hue} 80% 62% / 0.18)`;
+    const accentBorder = `hsla(${hue} 88% 70% / 0.34)`;
+    const accentGlow = `hsla(${hue} 85% 58% / 0.28)`;
+    const accentSurface = `linear-gradient(160deg, hsla(${hue} 72% 20% / 0.96), hsla(${(hue + 22) % 360} 70% 12% / 0.98))`;
+    return {
+      hue,
+      accent,
+      accentStrong,
+      accentSoft,
+      accentBorder,
+      accentGlow,
+      accentSurface
+    };
+  }
+
+  function teamThemeStyle(seed) {
+    const theme = teamTheme(seed);
+    return [
+      `--team-accent:${theme.accent}`,
+      `--team-accent-strong:${theme.accentStrong}`,
+      `--team-accent-soft:${theme.accentSoft}`,
+      `--team-accent-border:${theme.accentBorder}`,
+      `--team-accent-glow:${theme.accentGlow}`,
+      `--team-accent-surface:${theme.accentSurface}`
+    ].join(';');
+  }
+
+  function pageIsActive(activePage, href) {
+    if (href === 'index.html') return activePage === 'index.html';
+    if (href === 'players.html') return ['players.html', 'player.html'].includes(activePage);
+    if (href === 'teams.html') return ['teams.html', 'team.html'].includes(activePage);
+    if (href === 'matches.html') return ['matches.html', 'match.html'].includes(activePage);
+    if (href === 'tournaments.html') return ['tournaments.html', 'tournament.html'].includes(activePage);
+    if (href === 'rankings.html') return ['rankings.html'].includes(activePage);
+    if (href === 'h2h.html') return ['h2h.html'].includes(activePage);
+    return activePage === href;
+  }
+
+  function currentTheme() {
+    try {
+      return localStorage.getItem('theme') === 'light' ? 'light' : 'dark';
+    } catch (_) {
+      return 'dark';
+    }
+  }
+
+  function applyTheme(theme) {
+    const nextTheme = theme === 'light' ? 'light' : 'dark';
+    document.documentElement.classList.toggle('light', nextTheme === 'light');
+    document.documentElement.setAttribute('data-theme', nextTheme);
+    try {
+      localStorage.setItem('theme', nextTheme);
+    } catch (_) {}
+  }
+
+  function bindThemeToggle(root) {
+    const toggle = root.querySelector('[data-theme-toggle]');
+    if (!toggle) return;
+    toggle.checked = currentTheme() === 'light';
+    toggle.addEventListener('change', () => {
+      applyTheme(toggle.checked ? 'light' : 'dark');
+    });
+  }
+
+  function bindHeaderSearch(root) {
+    const form = root.querySelector('[data-hub-search-form]');
+    if (!form) return;
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const input = root.querySelector('[data-hub-search-input]');
+      const target = root.querySelector('[data-hub-search-target]');
+      const query = String(input && input.value || '').trim();
+      const href = target && target.value === 'teams' ? 'teams.html' : 'players.html';
+      if (!query) {
+        window.location.href = href;
+        return;
+      }
+      window.location.href = `${href}?search=${encodeURIComponent(query)}`;
+    });
+  }
+
   function navTemplate(activePage) {
-    const links = [
-      ['index.html', 'Home', 'home', '#7cf2ff'],
-      ['rankings.html', 'Rankings', 'rankings', '#76b8ff'],
-      ['players.html', 'Players', 'players', '#5de2a5'],
-      ['matches.html', 'Matches', 'matches', '#9ac6ff'],
-      ['tournaments.html', 'Tournaments', 'tournaments', '#86f0ff'],
-      ['teams.html', 'Teams', 'teams', '#89a8ff'],
-      ['h2h.html', 'H2H', 'h2h', '#7cffd2'],
-      ['builder.html', 'Builder', 'builder', '#ffd88d'],
-      ['servers.html', 'Servers', 'servers', '#7cdcff'],
-      ['discord.html', 'Discord', 'discord', '#8be4ff']
+    const nav = [
+      { href: 'index.html', label: 'Home', tone: '#ff3aa7' },
+      {
+        href: 'players.html',
+        label: 'Players',
+        tone: '#ff5fb9',
+        children: [
+          ['players.html', 'Browser'],
+          ['rankings.html', 'Leaderboards']
+        ]
+      },
+      {
+        href: 'teams.html',
+        label: 'Teams',
+        tone: '#ff7a72',
+        children: [
+          ['teams.html', 'Club Browser'],
+          ['h2h.html', 'Head To Head']
+        ]
+      },
+      {
+        href: 'matches.html',
+        label: 'Matches',
+        tone: '#f9a43a',
+        children: [
+          ['matches.html', 'Archive'],
+          ['match.html', 'Match Detail']
+        ]
+      },
+      {
+        href: 'tournaments.html',
+        label: 'Tournaments',
+        tone: '#58d6a6',
+        children: [
+          ['tournaments.html', 'Tournaments'],
+          ['builder.html', 'Lineup Builder']
+        ]
+      },
+      { href: 'servers.html', label: 'Servers', tone: '#53b5ff' },
+      { href: 'discord.html', label: 'Discord', tone: '#8b9dff' }
     ];
 
     return `
-      <header class="header">
-        <div class="header-inner">
+      <header class="topbar">
+        <div class="topbar-inner">
           <a class="brand" href="index.html">
-            <span class="brand-dot"></span>
-            IOSCA Hub
+            <span class="brand-mark">
+              <img class="brand-logo" src="assets/icons/iosca-icon.png" alt="IOSCA">
+            </span>
+            <span class="brand-copy">
+              <span class="brand-name">IOSCA Hub</span>
+              <span class="brand-subtitle">Competition Intelligence</span>
+            </span>
           </a>
-          <nav class="nav">
-            ${links.map(([href, label, key, accent]) => {
-              const active = activePage === href ? 'active' : '';
-              return `<a class="nav-link nav-${key} ${active}" style="--nav-accent:${accent};" href="${href}">${label}</a>`;
+
+          <nav class="nav-strip" aria-label="Primary navigation">
+            ${nav.map((item) => {
+              const active = pageIsActive(activePage, item.href);
+              if (!item.children) {
+                return `
+                  <a class="nav-link ${active ? 'active' : ''}" style="--nav-accent:${item.tone};" href="${item.href}">
+                    ${item.label}
+                  </a>
+                `;
+              }
+              return `
+                <div class="nav-group">
+                  <a class="nav-group-toggle ${active ? 'active' : ''}" style="--nav-accent:${item.tone};" href="${item.href}">
+                    <span>${item.label}</span>
+                    <span class="nav-caret">+</span>
+                  </a>
+                  <div class="nav-flyout">
+                    ${item.children.map(([href, label]) => `
+                      <a class="${pageIsActive(activePage, href) ? 'active' : ''}" href="${href}">
+                        <strong>${label}</strong>
+                        <span>${label === 'Leaderboards' ? 'Top performers and position leaders' : label === 'Head To Head' ? 'Compare clubs and recent meetings' : label === 'Match Detail' ? 'Deep dive into a single fixture' : 'Open section'}</span>
+                      </a>
+                    `).join('')}
+                  </div>
+                </div>
+              `;
             }).join('')}
           </nav>
+
+          <div class="topbar-actions">
+            <form class="header-search" data-hub-search-form>
+              <span>⌕</span>
+              <input data-hub-search-input type="search" placeholder="Search players or teams" autocomplete="off" spellcheck="false">
+              <select data-hub-search-target aria-label="Search category">
+                <option value="players">Players</option>
+                <option value="teams">Teams</option>
+              </select>
+            </form>
+            <label class="theme-switch" title="Toggle light mode">
+              <input type="checkbox" data-theme-toggle aria-label="Toggle light mode">
+              <span class="theme-slider">
+                <span class="theme-star theme-star-1"></span>
+                <span class="theme-star theme-star-2"></span>
+                <span class="theme-star theme-star-3"></span>
+                <svg class="theme-cloud" viewBox="0 0 100 60" fill="white">
+                  <ellipse cx="50" cy="45" rx="40" ry="15"></ellipse>
+                  <ellipse cx="35" cy="38" rx="20" ry="18"></ellipse>
+                  <ellipse cx="60" cy="33" rx="25" ry="22"></ellipse>
+                </svg>
+              </span>
+            </label>
+          </div>
         </div>
       </header>
     `;
@@ -78,28 +255,38 @@
     apple.setAttribute('href', href);
   }
 
-  function renderLayout(activePage, pageTitle) {
+  function renderLayout(activePage, pageTitle, options) {
     ensureFavicon();
+    applyTheme(currentTheme());
     const root = byId('app');
     if (!root) return;
+    const opts = options && typeof options === 'object' ? options : {};
+    const layout = String(opts.layout || 'standard');
+    const eyebrow = String(opts.eyebrow || 'IOSCA Community Hub');
+    const compact = Boolean(opts.compactHeader);
+    const pageShellClass = layout === 'wide'
+      ? 'page-shell is-wide'
+      : layout === 'narrow'
+        ? 'page-shell is-narrow'
+        : layout === 'fluid'
+          ? 'page-shell is-fluid'
+          : 'page-shell';
     root.innerHTML = `
-      ${navTemplate(activePage)}
-      <main class="main">
-        <section class="hero-banner">
-          <div class="hero-banner-glow"></div>
-          <div class="hero-banner-inner">
-            <img class="hero-logo" src="assets/icons/iosca-icon.png" alt="IOSCA logo" onerror="if(!this.dataset.fallback){this.dataset.fallback='1';this.src='assets/img/iosca-logo.png';}else{this.style.display='none';}">
-            <div>
-              <div class="hero-kicker">IOSCA COMMUNITY</div>
-              <h1 class="hero-title">${esc(pageTitle)}</h1>
-            </div>
+      <div class="site-shell">
+        ${navTemplate(activePage)}
+        <main class="${pageShellClass} ${compact ? 'main-compact' : ''}">
+        <section class="page-banner">
+          <div class="page-banner-copy">
+            <span class="page-banner-eyebrow">${esc(eyebrow)}</span>
+            <h1>${esc(pageTitle)}</h1>
           </div>
         </section>
-        <section class="card page-card">
-          <div id="page"></div>
-        </section>
-      </main>
+          <div id="page" class="page"></div>
+        </main>
+      </div>
     `;
+    bindThemeToggle(root);
+    bindHeaderSearch(root);
   }
 
   function showError(message) {
@@ -147,6 +334,9 @@
     renderLayout,
     showError,
     parseLineupEntries,
-    statIcons
+    statIcons,
+    applyTheme,
+    teamTheme,
+    teamThemeStyle
   };
 })();

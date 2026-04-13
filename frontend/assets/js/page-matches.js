@@ -1,6 +1,9 @@
 (async function () {
   const { renderLayout, byId, esc, fmtDate, fmtDateTime, showError } = window.HubUI;
-  renderLayout("matches.html", "Matches");
+  renderLayout("matches.html", "Match Archive", {
+    layout: "wide",
+    eyebrow: "Fixture Feed",
+  });
   const page = byId("page");
 
   const DEFAULT_STATE = {

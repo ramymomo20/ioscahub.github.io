@@ -1,6 +1,9 @@
 (async function () {
-  const { renderLayout, byId, esc, fmtDateTime, showError } = window.HubUI;
-  renderLayout("teams.html", "Teams");
+  const { renderLayout, byId, esc, fmtDateTime, showError, teamThemeStyle } = window.HubUI;
+  renderLayout("teams.html", "Team Browser", {
+    layout: "wide",
+    eyebrow: "Club Directory",
+  });
   const page = byId("page");
   const fallbackLogo = "assets/icons/iosca-icon.png";
 
@@ -109,8 +112,9 @@
   }
 
   function teamCard(team, index) {
+    const accentStyle = teamThemeStyle(team.guild_id || team.guildName);
     return `
-      <article class="team-browser-card" style="--card-index:${index};">
+      <article class="team-browser-card" style="--card-index:${index};${accentStyle}">
         <div class="team-browser-glow"></div>
         <div class="team-browser-head">
           <img class="team-browser-logo" src="${esc(team.guild_icon || fallbackLogo)}" alt="${esc(team.guildName)}" onerror="this.onerror=null;this.src='${fallbackLogo}';">
@@ -146,8 +150,9 @@
   }
 
   function teamListRow(team, index) {
+    const accentStyle = teamThemeStyle(team.guild_id || team.guildName);
     return `
-      <article class="team-list-row" style="--card-index:${index};">
+      <article class="team-list-row" style="--card-index:${index};${accentStyle}">
         <div class="team-list-main">
           <img class="team-list-logo" src="${esc(team.guild_icon || fallbackLogo)}" alt="${esc(team.guildName)}" onerror="this.onerror=null;this.src='${fallbackLogo}';">
           <div class="team-list-text">
@@ -193,6 +198,7 @@
     syncStateToUrl();
     const teams = filteredTeams();
     const metrics = summaryMetrics(teams);
+    const topRatedTeam = teams.find((team) => Number.isFinite(team.averageRatingValue)) || null;
 
     page.innerHTML = `
       <section class="teams-browser">
@@ -232,8 +238,9 @@
               </select>
             </label>
             <div class="teams-shortcut-card">
-              <div class="teams-shortcut-title">Head to Head</div>
-              <div class="teams-shortcut-copy">Open the dedicated comparison page and search for any two clubs.</div>
+              <div class="players-section-kicker">Head to Head</div>
+              <div class="teams-shortcut-title">Compare clubs instantly</div>
+              <div class="teams-shortcut-copy">${topRatedTeam ? `Highest visible rating right now: ${esc(topRatedTeam.guildName)} at ${esc(formatRating(topRatedTeam.averageRatingValue))}.` : "Open the dedicated comparison page and search for any two clubs."}</div>
               <a class="player-browser-action primary" href="h2h.html">Open H2H</a>
             </div>
           </div>

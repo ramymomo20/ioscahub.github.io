@@ -1,6 +1,9 @@
 (function () {
-  const { renderLayout, byId, esc, fmtDateTime, showError } = window.HubUI;
-  renderLayout("match.html", "Match Detail");
+  const { renderLayout, byId, esc, fmtDateTime, showError, teamThemeStyle } = window.HubUI;
+  renderLayout("match.html", "Match Detail", {
+    layout: "fluid",
+    eyebrow: "Fixture Breakdown",
+  });
   const page = byId("page");
 
   const params = new URLSearchParams(window.location.search);
@@ -810,7 +813,7 @@
         <div class="pitch-player ${isMvp ? "is-mvp" : ""} ${hoverClasses.join(" ")}" style="left:${slot.x}%;top:${slot.y}%;">
           ${Number.isFinite(rating) ? `<div class="pitch-rating-chip">${esc(rating.toFixed(1))}</div>` : ""}
           <div class="pitch-jersey">${esc(entry.pos || slot.pos)}</div>
-          <div class="pitch-player-name">${isMvp ? '<span class="mvp-badge" title="MVP">🏆</span>' : ""}${nameNode}</div>
+          <div class="pitch-player-name">${isMvp ? '<span class="mvp-badge" title="MVP">MVP</span>' : ""}${nameNode}</div>
           ${playerStatChips(stats)}
           ${playerHoverCardHtml(stats, profileSteamId, entry)}
         </div>
@@ -955,7 +958,7 @@
           </div>
           <div class="mvp-rating">${esc(rating.toFixed(1))}/10</div>
         </div>
-        <div class="mvp-name"><span class="mvp-name-emoji">🏆</span>${esc(playerName)}</div>
+        <div class="mvp-name"><span class="mvp-name-emoji">MVP</span>${esc(playerName)}</div>
         <div class="mvp-sub">${esc(position)}</div>
         <div class="mvp-reason">${esc(mvpReason(mvp))}</div>
         <div class="mvp-stats-grid">${statsHtml}</div>
@@ -993,38 +996,61 @@
       const awayLookup = buildStatsLookup(awayStats);
       const mvp = resolveMvp(allStats, data.mvp || null);
       const mvpKey = mvpIdentity(mvp);
+      const homeStyle = teamThemeStyle(match.home_guild_id || match.home_team_name || "home");
+      const awayStyle = teamThemeStyle(match.away_guild_id || match.away_team_name || "away");
 
       page.innerHTML = `
-        <section class="match-panel">
+        <section class="match-panel match-shell">
           <div class="match-top-row">
             <div class="left">${esc(competitionLabel)}${whenLabel ? ` - ${esc(whenLabel)}` : ""}</div>
             <div class="right">Full-time</div>
           </div>
 
           <div class="match-hero">
-            <div class="match-side">
+            <div class="match-hero-grid">
+            <div class="match-side" style="${esc(homeStyle)}">
               ${teamLogo(match.home_team_icon, match.home_team_name || "Home")}
               <h2 class="match-team-name">${esc(match.home_team_name || "Home")}</h2>
               ${teamEventSummaryHtml(match.home_team_name || "Home", match.home_team_icon, homeEvents, "home", match.home_score)}
             </div>
 
-            <div class="match-score">
-              <div class="value">${esc(match.home_score ?? 0)} - ${esc(match.away_score ?? 0)}</div>
-              <div class="flags">
+            <div class="match-vs-strip">
+              <span class="pill match-status-pill">Full-time</span>
+              <div class="match-team-score">${esc(match.home_score ?? 0)} - ${esc(match.away_score ?? 0)}</div>
+              <div class="flags" style="display:flex;flex-wrap:wrap;gap:8px;justify-content:center;">
                 ${match.extratime ? '<span class="badge">ET</span>' : ""}
                 ${match.penalties ? '<span class="badge">PEN</span>' : ""}
                 ${comebackFlag ? '<span class="badge">COMEBACK</span>' : ""}
               </div>
+              <div class="meta">${esc(matchDate)}</div>
             </div>
 
-            <div class="match-side">
+            <div class="match-side" style="${esc(awayStyle)}">
               ${teamLogo(match.away_team_icon, match.away_team_name || "Away")}
               <h2 class="match-team-name">${esc(match.away_team_name || "Away")}</h2>
               ${teamEventSummaryHtml(match.away_team_name || "Away", match.away_team_icon, awayEvents, "away", match.away_score)}
             </div>
+            </div>
           </div>
 
-          <div class="match-bottom-meta">${esc(matchDate)}</div>
+          <div class="match-meta-row">
+            <div class="match-kpi">
+              <span>Tournament</span>
+              <strong>${esc(match.tournament_name || "Independent Match")}</strong>
+            </div>
+            <div class="match-kpi">
+              <span>Format</span>
+              <strong>${esc(match.game_type || "Unknown")}</strong>
+            </div>
+            <div class="match-kpi">
+              <span>Played</span>
+              <strong>${esc(matchDate)}</strong>
+            </div>
+            <div class="match-kpi">
+              <span>Status</span>
+              <strong>${match.penalties ? "Finished After Penalties" : match.extratime ? "Finished After Extra Time" : "Finished In Regulation"}</strong>
+            </div>
+          </div>
         </section>
 
         ${hasEvents ? eventMapSectionHtml(homeEvents, awayEvents) : ""}

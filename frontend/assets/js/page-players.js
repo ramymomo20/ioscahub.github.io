@@ -1,6 +1,9 @@
 (async function () {
   const { renderLayout, byId, esc, fmtDate, showError } = window.HubUI;
-  renderLayout("players.html", "Players");
+  renderLayout("players.html", "Player Browser", {
+    layout: "wide",
+    eyebrow: "Scouting Database",
+  });
   const page = byId("page");
   const fallbackAvatar = "https://cdn.discordapp.com/embed/avatars/0.png";
 

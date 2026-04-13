@@ -1,6 +1,9 @@
 (async function () {
-  const { renderLayout, byId, esc, fmtDate, fmtDateTime, showError } = window.HubUI;
-  renderLayout("h2h.html", "Head to Head");
+  const { renderLayout, byId, esc, fmtDate, fmtDateTime, showError, teamThemeStyle } = window.HubUI;
+  renderLayout("h2h.html", "Head to Head", {
+    layout: "wide",
+    eyebrow: "Club Comparison",
+  });
   const page = byId("page");
   const fallbackLogo = "assets/icons/iosca-icon.png";
 
@@ -169,9 +172,10 @@
     const selectedTeam = getTeamById(state[which]);
     const results = searchResults(which);
     const isActive = activePicker === which;
+    const selectedStyle = selectedTeam ? teamThemeStyle(selectedTeam.id || selectedTeam.name) : "";
     const selectedMarkup = selectedTeam
       ? `
-        <button type="button" class="h2h-selected-team" data-open-picker="${esc(which)}">
+        <button type="button" class="h2h-selected-team" data-open-picker="${esc(which)}" style="${esc(selectedStyle)}">
           <img src="${esc(selectedTeam.guild_icon || fallbackLogo)}" alt="${esc(selectedTeam.name)}" onerror="this.onerror=null;this.src='${fallbackLogo}';">
           <span>
             <strong>${esc(selectedTeam.name)}</strong>
@@ -195,7 +199,7 @@
         ${(isActive || (!selectedTeam && pickerInputs[which])) ? `
           <div class="h2h-results-list">
             ${results.length ? results.map((team) => `
-              <button type="button" class="h2h-result-item" data-select-team="${esc(which)}" data-team-id="${esc(team.id)}">
+              <button type="button" class="h2h-result-item" data-select-team="${esc(which)}" data-team-id="${esc(team.id)}" style="${esc(teamThemeStyle(team.id || team.name))}">
                 <img src="${esc(team.guild_icon || fallbackLogo)}" alt="${esc(team.name)}" onerror="this.onerror=null;this.src='${fallbackLogo}';">
                 <span>
                   <strong>${esc(team.name)}</strong>
@@ -264,11 +268,13 @@
     const summary = comparisonState.data.summary || {};
     const matches = Array.isArray(comparisonState.data.matches) ? comparisonState.data.matches : [];
     const formats = Array.isArray(comparisonState.data.formats) ? comparisonState.data.formats : [];
+    const team1Style = teamThemeStyle(team1.id || team1.name);
+    const team2Style = teamThemeStyle(team2.id || team2.name);
 
     return `
       <section class="h2h-comparison">
         <div class="h2h-hero-card">
-          <div class="h2h-hero-team">
+          <div class="h2h-hero-team" style="${esc(team1Style)}">
             <img src="${esc(team1.guild_icon || fallbackLogo)}" alt="${esc(team1.name)}" onerror="this.onerror=null;this.src='${fallbackLogo}';">
             <strong>${esc(team1.name)}</strong>
           </div>
@@ -277,7 +283,7 @@
             <div class="h2h-record">${esc(`${summary.team1_wins || 0} - ${summary.draws || 0} - ${summary.team2_wins || 0}`)}</div>
             <div class="h2h-record-sub">${esc(`${summary.matches_played || 0} meetings`)}</div>
           </div>
-          <div class="h2h-hero-team right">
+          <div class="h2h-hero-team right" style="${esc(team2Style)}">
             <img src="${esc(team2.guild_icon || fallbackLogo)}" alt="${esc(team2.name)}" onerror="this.onerror=null;this.src='${fallbackLogo}';">
             <strong>${esc(team2.name)}</strong>
           </div>

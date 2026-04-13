@@ -742,6 +742,22 @@ def _build_team_event_items_from_summary(summary_rows: Any) -> list[dict[str, An
     return events[:20]
 
 
+def _event_items_signature(events: list[dict[str, Any]]) -> tuple[tuple[Any, ...], ...]:
+    normalized: list[tuple[Any, ...]] = []
+    for item in events or []:
+        if not isinstance(item, dict):
+            continue
+        normalized.append(
+            (
+                str(item.get("kind") or ""),
+                _norm_text_key(item.get("name") or ""),
+                tuple(_safe_minutes(item.get("minutes"))),
+                _safe_int(item.get("count")),
+            )
+        )
+    return tuple(normalized)
+
+
 def _records_to_dicts(rows: list[Any]) -> list[dict[str, Any]]:
     return [_record_to_dict(row) for row in rows]
 
@@ -1976,6 +1992,14 @@ async def match_detail(match_id: str) -> dict[str, Any]:
     summary_away_events = _build_team_event_items_from_summary(match_payload.get("match_summary_away"))
     row_home_events = _build_team_event_items(grouped.get("home", []))
     row_away_events = _build_team_event_items(grouped.get("away", []))
+    summary_events_duplicated = (
+        bool(summary_home_events)
+        and bool(summary_away_events)
+        and _event_items_signature(summary_home_events) == _event_items_signature(summary_away_events)
+    )
+    prefer_row_events = is_same_side_match or summary_events_duplicated
+    home_events_payload = row_home_events if prefer_row_events and row_home_events else (summary_home_events or row_home_events)
+    away_events_payload = row_away_events if prefer_row_events and row_away_events else (summary_away_events or row_away_events)
 
     return {
         "match": match_payload,
@@ -1986,8 +2010,8 @@ async def match_detail(match_id: str) -> dict[str, Any]:
         },
         "mvp": mvp_payload,
         "team_events": {
-            "home": summary_home_events or row_home_events,
-            "away": summary_away_events or row_away_events,
+            "home": home_events_payload,
+            "away": away_events_payload,
         },
     }
 
