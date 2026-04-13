@@ -1,7 +1,7 @@
 (async function () {
   const { renderLayout, byId, esc, showError } = window.HubUI;
   renderLayout("rankings.html", "Player Leaderboards", {
-    layout: "wide",
+    layout: "standard",
     eyebrow: "Top Performers",
   });
 
@@ -74,12 +74,12 @@
             <strong>${esc(fmtRating(player.rating))}</strong>
           </div>
           <div class="leaderboard-kpi">
-            <span>Steam ID</span>
-            <strong>${esc(player.steam_id || "N/A")}</strong>
-          </div>
-          <div class="leaderboard-kpi">
             <span>Role</span>
             <strong>${esc(player.position || "N/A")}</strong>
+          </div>
+          <div class="leaderboard-kpi">
+            <span>Profile</span>
+            <strong>Open player</strong>
           </div>
         </div>
       </article>
@@ -146,8 +146,8 @@
                   <strong>${esc(player.position || "N/A")}</strong>
                 </div>
                 <div class="leaderboard-kpi">
-                  <span>Steam ID</span>
-                  <strong>${esc(player.steam_id || "N/A")}</strong>
+                  <span>Profile</span>
+                  <strong>Open player</strong>
                 </div>
               </div>
             </a>

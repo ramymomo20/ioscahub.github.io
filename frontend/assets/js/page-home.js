@@ -1,12 +1,10 @@
 (async function () {
-  const { renderLayout, byId, esc, fmtDateTime, showError, teamThemeStyle } = window.HubUI;
-  renderLayout("index.html", "Competition Hub", {
-    layout: "wide",
-    eyebrow: "IOSCA Community Data",
+  const { renderLayout, byId, esc, fmtDateTime, showError } = window.HubUI;
+  renderLayout("index.html", "Welcome to the Official Hub of IOSoccer CA.", {
+    eyebrow: "IOSCA Community Hub",
   });
 
   const page = byId("page");
-  const fallbackLogo = "assets/icons/iosca-icon.png";
   const fallbackAvatar = "https://cdn.discordapp.com/embed/avatars/0.png";
 
   function num(value) {
@@ -14,183 +12,164 @@
     return Number.isFinite(parsed) ? parsed : 0;
   }
 
+  function fmtCount(value) {
+    return num(value).toLocaleString();
+  }
+
   function fmtRating(value) {
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed.toFixed(2) : "N/A";
   }
 
-  function teamLogo(name, icon) {
-    const src = String(icon || "").trim() || (/iosca/i.test(String(name || "")) ? fallbackLogo : fallbackLogo);
-    return `<img src="${esc(src)}" alt="${esc(name || "Team")}" onerror="this.onerror=null;this.src='${fallbackLogo}';">`;
-  }
-
-  function playerAvatar(player) {
+  function avatarFor(player) {
     return esc(player.display_avatar_url || player.steam_avatar_url || player.avatar_url || player.avatar_fallback_url || fallbackAvatar);
   }
 
   function matchFlags(match) {
-    const flags = [];
-    if (match.extratime) flags.push('<span class="badge">ET</span>');
-    if (match.penalties) flags.push('<span class="badge">PEN</span>');
-    if (match.is_forfeit) flags.push('<span class="badge">FF</span>');
-    return flags.join(" ");
+    const parts = [];
+    if (match.extratime) parts.push('<span class="badge">ET</span>');
+    if (match.penalties) parts.push('<span class="badge">PEN</span>');
+    return parts.length ? parts.join(" ") : "-";
+  }
+
+  function topPlayerCard(player, index) {
+    if (!player) {
+      return '<article class="home-player-podium"><div class="empty">No player data</div></article>';
+    }
+    const medalClass = index === 0 ? "gold" : index === 1 ? "silver" : "bronze";
+    return `
+      <a class="home-player-podium ${medalClass}" href="player.html?steam_id=${encodeURIComponent(player.steam_id || "")}">
+        <span class="home-player-rank">#${index + 1}</span>
+        <img src="${avatarFor(player)}" alt="${esc(player.discord_name || player.steam_name || "Player")}" onerror="this.onerror=null;this.src='${fallbackAvatar}';">
+        <strong>${esc(player.discord_name || player.steam_name || "Unknown")}</strong>
+        <span>${esc(player.position || "N/A")}</span>
+        <em>${esc(fmtRating(player.rating))}</em>
+      </a>
+    `;
   }
 
   try {
     const [summary, matchesRes, tournamentsRes, rankingsRes, teamsRes] = await Promise.all([
       window.HubApi.summary(),
-      window.HubApi.matches(10),
+      window.HubApi.matches(12),
       window.HubApi.tournaments(),
-      window.HubApi.rankings(12),
+      window.HubApi.rankings(8),
       window.HubApi.teams(),
     ]);
 
-    const summaryCards = [
-      ["Players", num(summary.players_total)],
-      ["Teams", num(summary.teams_total)],
-      ["Matches", num(summary.matches_total)],
-      ["Live Tournaments", num(summary.active_tournaments_total)],
+    const widgets = [
+      ["Players", fmtCount(summary.players_total)],
+      ["Teams", fmtCount(summary.teams_total)],
+      ["Matches", fmtCount(summary.matches_total)],
+      ["Active Tournaments", fmtCount(summary.active_tournaments_total)],
+      ["Active Servers", fmtCount(summary.active_servers_total)],
     ];
 
-    const recentMatches = Array.isArray(matchesRes.matches) ? matchesRes.matches.slice(0, 6) : [];
-    const tournaments = Array.isArray(tournamentsRes.tournaments) ? tournamentsRes.tournaments : [];
-    const activeTournaments = tournaments
+    const players = Array.isArray(rankingsRes.players) ? rankingsRes.players.slice(0, 3) : [];
+    const recentMatches = Array.isArray(matchesRes.matches) ? matchesRes.matches.slice(0, 8) : [];
+    const activeTournaments = (Array.isArray(tournamentsRes.tournaments) ? tournamentsRes.tournaments : [])
       .filter((item) => String(item.status || "").toLowerCase() === "active")
-      .slice(0, 4);
-    const players = Array.isArray(rankingsRes.players) ? rankingsRes.players.slice(0, 5) : [];
-    const teams = (Array.isArray(teamsRes.teams) ? teamsRes.teams : [])
+      .slice(0, 6);
+    const topTeams = (Array.isArray(teamsRes.teams) ? teamsRes.teams : [])
       .map((team) => ({
-        ...team,
-        guildName: String(team.guild_name || "Unknown Team").trim() || "Unknown Team",
-        captainName: String(team.captain_name || "N/A").trim() || "N/A",
-        playerCount: Math.max(0, Math.round(num(team.player_count))),
-        averageRatingValue: Number.isFinite(Number(team.average_rating)) ? Number(team.average_rating) : null,
+        id: team.guild_id,
+        name: String(team.guild_name || "Unknown Team").trim() || "Unknown Team",
+        rating: Number.isFinite(Number(team.average_rating)) ? Number(team.average_rating) : null,
       }))
-      .sort((left, right) => (num(right.averageRatingValue) - num(left.averageRatingValue)) || left.guildName.localeCompare(right.guildName))
-      .slice(0, 4);
+      .filter((team) => Number.isFinite(team.rating))
+      .sort((left, right) => right.rating - left.rating || left.name.localeCompare(right.name))
+      .slice(0, 6);
 
     page.innerHTML = `
-      <section class="home-hero">
-        <div class="home-surface">
-          <div class="home-kicker">League Control Center</div>
-          <h2 class="home-hero-title">Track players, teams, fixtures, and rankings from one place.</h2>
-          <p class="home-hero-copy">The hub now leans into a compact sports-data layout: stronger hierarchy, faster scanning, and cleaner transitions between teams, matches, and leaderboards.</p>
-          <div class="home-hero-actions">
-            <a class="home-action-btn" href="matches.html">Open Match Archive</a>
-            <a class="player-browser-action" href="rankings.html">View Leaderboards</a>
-            <a class="player-browser-action" href="teams.html">Browse Teams</a>
-          </div>
-        </div>
-
-        <aside class="home-hero-aside">
-          <article class="home-surface">
-            <div class="home-kicker">Quick Access</div>
-            <div class="home-list">
-              <a class="home-list-item" href="players.html">
-                <strong>Players</strong>
-                <span class="home-panel-copy">Search profiles, ratings, and position data.</span>
-              </a>
-              <a class="home-list-item" href="teams.html">
-                <strong>Teams</strong>
-                <span class="home-panel-copy">Color-accent cards, H2H links, and roster context.</span>
-              </a>
-              <a class="home-list-item" href="h2h.html">
-                <strong>Head To Head</strong>
-                <span class="home-panel-copy">Compare any two clubs with record and recent meetings.</span>
-              </a>
-            </div>
-          </article>
-        </aside>
+      <section class="home-actions-row">
+        <a class="home-action-btn" href="rankings.html">View Leaderboards</a>
+        <a class="player-browser-action" href="teams.html">Browse Teams</a>
       </section>
 
-      <section class="home-micro-grid">
-        ${summaryCards.map(([label, value]) => `
+      <section class="home-micro-grid compact">
+        ${widgets.map(([label, value]) => `
           <article class="home-stat-card">
             <span class="label">${esc(label)}</span>
-            <strong class="value">${esc(String(value))}</strong>
+            <strong class="value">${esc(value)}</strong>
           </article>
         `).join("")}
       </section>
 
-      <section class="home-feed-grid">
-        <div class="home-feed-card">
-          <div class="home-kicker">Recent Matches</div>
-          <h3>Latest results</h3>
-          <div class="home-list">
-            ${recentMatches.length ? recentMatches.map((match) => `
-              <a class="home-match-card" href="match.html?id=${encodeURIComponent(match.id)}">
-                <div class="match-summary-row">
-                  <strong>${esc(match.home_team_name || "Home")} vs ${esc(match.away_team_name || "Away")}</strong>
-                  <span>${esc(`${match.home_score ?? 0} - ${match.away_score ?? 0}`)}</span>
-                </div>
-                <div class="match-summary-row">
-                  <span>${esc(match.tournament_name || "Independent Match")}</span>
-                  <span>${esc(match.game_type || "Unknown")}</span>
-                </div>
-                <div class="match-summary-row">
-                  <span>${esc(fmtDateTime(match.datetime))}</span>
-                  <span>${matchFlags(match) || '<span class="meta">Standard</span>'}</span>
-                </div>
-              </a>
-            `).join("") : '<div class="empty">No recent matches were returned.</div>'}
+      <section class="home-dashboard-grid">
+        <div class="card">
+          <div class="home-section-head">
+            <h2>Recent Matches</h2>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Tournament</th>
+                  <th>Match</th>
+                  <th>Format</th>
+                  <th>Flags</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${recentMatches.length ? recentMatches.map((match) => `
+                  <tr>
+                    <td>${esc(fmtDateTime(match.datetime))}</td>
+                    <td>${esc(match.tournament_name || "-")}</td>
+                    <td>
+                      <a class="mini-match-link" href="match.html?id=${encodeURIComponent(match.id)}">
+                        <span>${esc(match.home_team_name || "Home")}</span>
+                        <strong>${esc(`${match.home_score ?? 0} - ${match.away_score ?? 0}`)}</strong>
+                        <span>${esc(match.away_team_name || "Away")}</span>
+                      </a>
+                    </td>
+                    <td>${esc(match.game_type || "-")}</td>
+                    <td>${matchFlags(match)}</td>
+                  </tr>
+                `).join("") : '<tr><td colspan="5">No matches yet.</td></tr>'}
+              </tbody>
+            </table>
           </div>
         </div>
 
-        <div class="home-feed-card">
-          <div class="home-kicker">Tournaments</div>
-          <h3>Active competitions</h3>
-          <div class="home-list">
-            ${activeTournaments.length ? activeTournaments.map((tournament) => `
-              <a class="home-list-item" href="tournament.html?id=${encodeURIComponent(tournament.id)}">
-                <strong>${esc(tournament.name || "Tournament")}</strong>
-                <span class="home-panel-copy">${esc(tournament.format || "Unknown format")} &middot; ${esc(String(num(tournament.fixtures_played)))} / ${esc(String(num(tournament.fixtures_total)))} fixtures</span>
-              </a>
-            `).join("") : '<div class="empty">No active tournaments right now.</div>'}
+        <div class="home-side-stack">
+          <div class="card">
+            <div class="home-section-head">
+              <h2>Top Players</h2>
+            </div>
+            <div class="home-player-podium-grid">
+              ${[0, 1, 2].map((index) => topPlayerCard(players[index], index)).join("")}
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="home-section-head">
+              <h2>Highest Rated Clubs</h2>
+            </div>
+            <div class="home-simple-list">
+              ${topTeams.length ? topTeams.map((team, index) => `
+                <a class="home-simple-row" href="team.html?id=${encodeURIComponent(team.id || "")}">
+                  <span>#${index + 1} ${esc(team.name)}</span>
+                  <strong>${esc(fmtRating(team.rating))}</strong>
+                </a>
+              `).join("") : '<div class="empty">No team ratings available.</div>'}
+            </div>
           </div>
         </div>
       </section>
 
-      <section class="home-leaders-grid">
-        <div class="home-feed-card">
-          <div class="home-kicker">Top Teams</div>
-          <h3>Highest rated clubs</h3>
-          <div class="home-list">
-            ${teams.length ? teams.map((team) => `
-              <a class="home-team-spotlight" href="team.html?id=${encodeURIComponent(team.guild_id)}" style="${esc(teamThemeStyle(team.guild_id || team.guildName))}">
-                ${teamLogo(team.guildName, team.guild_icon)}
-                <span>
-                  <strong>${esc(team.guildName)}</strong>
-                  <span class="home-panel-copy">Captain ${esc(team.captainName)} &middot; ${esc(String(team.playerCount))} players</span>
-                </span>
-                <span class="pill is-accent">${esc(fmtRating(team.averageRatingValue))}</span>
-              </a>
-            `).join("") : '<div class="empty">No team ratings available yet.</div>'}
-          </div>
+      <section class="card">
+        <div class="home-section-head">
+          <h2>Active Tournaments</h2>
         </div>
-
-        <div class="home-feed-card">
-          <div class="home-kicker">Top Players</div>
-          <h3>Current leaderboard</h3>
-          <div class="home-list">
-            ${players.length ? players.map((player, index) => `
-              <a class="leaderboard-row" href="player.html?steam_id=${encodeURIComponent(player.steam_id || "")}">
-                <div class="leaderboard-row-rank">
-                  <strong>#${index + 1}</strong>
-                </div>
-                <div class="leaderboard-row-main">
-                  <img src="${playerAvatar(player)}" alt="${esc(player.discord_name || player.steam_name || "Player")}" onerror="this.onerror=null;this.src='${fallbackAvatar}';">
-                  <div>
-                    <div class="leaderboard-row-name">${esc(player.discord_name || player.steam_name || "Unknown")}</div>
-                    <div class="leaderboard-meta">${esc(player.position || "N/A")}</div>
-                  </div>
-                </div>
-                <div class="leaderboard-kpi">
-                  <span>Rating</span>
-                  <strong>${esc(fmtRating(player.rating))}</strong>
-                </div>
-              </a>
-            `).join("") : '<div class="empty">Leaderboard data is not available yet.</div>'}
-          </div>
+        <div class="home-tournament-grid">
+          ${activeTournaments.length ? activeTournaments.map((tournament) => `
+            <a class="home-tour-item" href="tournament.html?id=${encodeURIComponent(tournament.id)}">
+              <strong>${esc(tournament.name || "Tournament")}</strong>
+              <span>${esc(tournament.format || "-")}</span>
+              <span>${esc(String(num(tournament.fixtures_played)))} / ${esc(String(num(tournament.fixtures_total)))} fixtures</span>
+            </a>
+          `).join("") : '<div class="empty">No active tournaments.</div>'}
         </div>
       </section>
     `;

@@ -1,7 +1,7 @@
 (function () {
   const { renderLayout, byId, esc, fmtDateTime, showError, teamThemeStyle } = window.HubUI;
   renderLayout("match.html", "Match Detail", {
-    layout: "fluid",
+    layout: "standard",
     eyebrow: "Fixture Breakdown",
   });
   const page = byId("page");
@@ -1053,23 +1053,12 @@
           </div>
         </section>
 
-        ${hasEvents ? eventMapSectionHtml(homeEvents, awayEvents) : ""}
-
         ${comparisonSectionHtml(
           match.home_team_name || "Home",
           match.away_team_name || "Away",
           homeStats,
           awayStats
         )}
-
-        ${showDerived ? `
-        ${derivedContextHtml(
-          match.home_team_name || "Home",
-          match.away_team_name || "Away",
-          homeDerived,
-          awayDerived
-        )}
-        ` : ""}
 
         ${mvpWidgetHtml(mvp)}
 

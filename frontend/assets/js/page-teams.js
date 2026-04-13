@@ -1,7 +1,7 @@
 (async function () {
   const { renderLayout, byId, esc, fmtDateTime, showError, teamThemeStyle } = window.HubUI;
   renderLayout("teams.html", "Team Browser", {
-    layout: "wide",
+    layout: "standard",
     eyebrow: "Club Directory",
   });
   const page = byId("page");
@@ -115,7 +115,6 @@
     const accentStyle = teamThemeStyle(team.guild_id || team.guildName);
     return `
       <article class="team-browser-card" style="--card-index:${index};${accentStyle}">
-        <div class="team-browser-glow"></div>
         <div class="team-browser-head">
           <img class="team-browser-logo" src="${esc(team.guild_icon || fallbackLogo)}" alt="${esc(team.guildName)}" onerror="this.onerror=null;this.src='${fallbackLogo}';">
           <div class="team-browser-title-wrap">
@@ -127,23 +126,8 @@
             <strong>${esc(formatRating(team.averageRatingValue))}</strong>
           </div>
         </div>
-        <div class="team-browser-stats">
-          <div class="team-browser-stat">
-            <span>Players</span>
-            <strong>${esc(String(team.playerCount))}</strong>
-          </div>
-          <div class="team-browser-stat">
-            <span>Created</span>
-            <strong>${esc(team.createdAt ? fmtDateTime(team.createdAt) : "N/A")}</strong>
-          </div>
-          <div class="team-browser-stat">
-            <span>Updated</span>
-            <strong>${esc(team.updatedAt ? fmtDateTime(team.updatedAt) : "N/A")}</strong>
-          </div>
-        </div>
         <div class="team-browser-actions">
           <a class="player-browser-action primary" href="team.html?id=${encodeURIComponent(team.guild_id)}">Open Team</a>
-          <a class="player-browser-action" href="h2h.html?team1=${encodeURIComponent(team.guild_id)}">H2H</a>
         </div>
       </article>
     `;
@@ -162,10 +146,9 @@
         </div>
         <div class="team-list-cell">${esc(String(team.playerCount))}</div>
         <div class="team-list-cell"><strong>${esc(formatRating(team.averageRatingValue))}</strong></div>
-        <div class="team-list-cell">${esc(team.updatedAt ? fmtDateTime(team.updatedAt) : "N/A")}</div>
+        <div class="team-list-cell">${esc(team.captainName)}</div>
         <div class="team-list-cell actions">
-          <a class="player-browser-action primary" href="team.html?id=${encodeURIComponent(team.guild_id)}">Profile</a>
-          <a class="player-browser-action" href="h2h.html?team1=${encodeURIComponent(team.guild_id)}">H2H</a>
+          <a class="player-browser-action primary" href="team.html?id=${encodeURIComponent(team.guild_id)}">Open Team</a>
         </div>
       </article>
     `;
@@ -240,7 +223,7 @@
             <div class="teams-shortcut-card">
               <div class="players-section-kicker">Head to Head</div>
               <div class="teams-shortcut-title">Compare clubs instantly</div>
-              <div class="teams-shortcut-copy">${topRatedTeam ? `Highest visible rating right now: ${esc(topRatedTeam.guildName)} at ${esc(formatRating(topRatedTeam.averageRatingValue))}.` : "Open the dedicated comparison page and search for any two clubs."}</div>
+              <div class="teams-shortcut-copy">Open the dedicated comparison page and search for any two clubs.</div>
               <a class="player-browser-action primary" href="h2h.html">Open H2H</a>
             </div>
           </div>

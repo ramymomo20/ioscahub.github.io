@@ -1,7 +1,7 @@
 (async function () {
   const { renderLayout, byId, esc, fmtDate, showError } = window.HubUI;
   renderLayout("players.html", "Player Browser", {
-    layout: "wide",
+    layout: "standard",
     eyebrow: "Scouting Database",
   });
   const page = byId("page");
@@ -209,15 +209,6 @@
     return Number.isFinite(value) ? value.toFixed(2) : "N/A";
   }
 
-  function formatMinutes(value) {
-    const total = Math.max(0, Math.round(num(value)));
-    if (!total) return "0m";
-    if (total < 60) return `${total}m`;
-    const hours = Math.floor(total / 60);
-    const minutes = total % 60;
-    return minutes ? `${hours}h ${minutes}m` : `${hours}h`;
-  }
-
   function matchesSearch(player) {
     if (!state.search) return true;
     return player.searchBlob.includes(state.search.toLowerCase());
@@ -337,13 +328,11 @@
   }
 
   function playerCard(player, index, instant) {
-    const steamLabel = player.steamName && player.steamName !== player.name ? player.steamName : player.steam_id;
     const registeredLabel = player.registered_at ? fmtDate(player.registered_at) : "N/A";
     const lastSeenLabel = player.lastMatchAt ? fmtDate(player.lastMatchAt) : "N/A";
 
     return `
       <article class="player-browser-card role-${esc(player.roleKey)}${instant ? " instant" : ""}" style="--card-index:${index};">
-        <div class="player-browser-glow"></div>
         <div class="player-browser-top">
           ${formatActivityPill(player)}
           <span class="player-browser-role role-${esc(player.roleKey)}">${esc(player.roleLabel)}</span>
@@ -354,7 +343,7 @@
             <div class="player-browser-header">
               <div>
                 <a class="player-browser-name" href="player.html?steam_id=${encodeURIComponent(player.steam_id)}">${esc(player.name)}</a>
-                <div class="player-browser-subtitle">${esc(steamLabel || "No Steam alias")}</div>
+                <div class="player-browser-subtitle">${esc(player.position)}</div>
               </div>
               <div class="player-browser-rating">
                 <span>Rating</span>
@@ -371,10 +360,6 @@
                 <strong>${esc(String(player.appearances))}</strong>
               </div>
               <div class="player-browser-stat">
-                <span>Minutes</span>
-                <strong>${esc(formatMinutes(player.minutes))}</strong>
-              </div>
-              <div class="player-browser-stat">
                 <span>Last match</span>
                 <strong>${esc(lastSeenLabel)}</strong>
               </div>
@@ -387,9 +372,6 @@
         </div>
         <div class="player-browser-actions">
           <a class="player-browser-action primary" href="player.html?steam_id=${encodeURIComponent(player.steam_id)}">Open Profile</a>
-          ${player.steam_profile_url
-            ? `<a class="player-browser-action" href="${esc(player.steam_profile_url)}" target="_blank" rel="noreferrer">Steam Profile</a>`
-            : `<span class="player-browser-action disabled">Steam Profile</span>`}
         </div>
       </article>
     `;
@@ -402,7 +384,7 @@
           <img class="player-list-avatar" src="${esc(player.display_avatar_url || player.steam_avatar_url || player.avatar_url || player.avatar_fallback_url || fallbackAvatar)}" alt="${esc(player.name)}" onerror="this.onerror=null;this.src='${fallbackAvatar}';">
           <div class="player-list-text">
             <a class="player-list-name" href="player.html?steam_id=${encodeURIComponent(player.steam_id)}">${esc(player.name)}</a>
-            <div class="player-list-subtitle">${esc(player.steamName || player.steam_id)}</div>
+            <div class="player-list-subtitle">${esc(player.position)}</div>
           </div>
         </div>
         <div class="player-list-cell">
@@ -475,7 +457,7 @@
               <span class="players-field-label">Search players</span>
               <div class="players-search-shell">
                 <span class="players-search-icon">&#9906;</span>
-                <input id="players-search" class="players-search-input" type="search" placeholder="Search by player, Steam ID, team, or position" value="${esc(state.search)}" autocomplete="off" spellcheck="false">
+                <input id="players-search" class="players-search-input" type="search" placeholder="Search by player, team, or position" value="${esc(state.search)}" autocomplete="off" spellcheck="false">
                 ${state.search ? '<button type="button" id="players-search-clear" class="players-search-clear" aria-label="Clear search">&times;</button>' : ""}
               </div>
             </label>

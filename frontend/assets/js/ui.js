@@ -38,22 +38,49 @@
 
   function teamTheme(seed) {
     const hash = hashString(seed);
-    const hue = hash % 360;
-    const accent = `hsl(${hue} 78% 60%)`;
-    const accentStrong = `hsl(${hue} 84% 54%)`;
-    const accentSoft = `hsla(${hue} 80% 62% / 0.18)`;
-    const accentBorder = `hsla(${hue} 88% 70% / 0.34)`;
-    const accentGlow = `hsla(${hue} 85% 58% / 0.28)`;
-    const accentSurface = `linear-gradient(160deg, hsla(${hue} 72% 20% / 0.96), hsla(${(hue + 22) % 360} 70% 12% / 0.98))`;
-    return {
-      hue,
-      accent,
-      accentStrong,
-      accentSoft,
-      accentBorder,
-      accentGlow,
-      accentSurface
-    };
+    const palettes = [
+      {
+        accent: '#179fff',
+        accentStrong: '#8af3ff',
+        accentSoft: 'rgba(23, 159, 255, 0.16)',
+        accentBorder: 'rgba(138, 243, 255, 0.28)',
+        accentGlow: 'rgba(23, 159, 255, 0.2)',
+        accentSurface: 'linear-gradient(160deg, rgba(8, 35, 76, 0.98), rgba(8, 16, 36, 0.98))'
+      },
+      {
+        accent: '#00d4ff',
+        accentStrong: '#9bf7ff',
+        accentSoft: 'rgba(0, 212, 255, 0.16)',
+        accentBorder: 'rgba(155, 247, 255, 0.28)',
+        accentGlow: 'rgba(0, 212, 255, 0.22)',
+        accentSurface: 'linear-gradient(160deg, rgba(5, 46, 74, 0.98), rgba(6, 20, 34, 0.98))'
+      },
+      {
+        accent: '#34d399',
+        accentStrong: '#9cfccf',
+        accentSoft: 'rgba(52, 211, 153, 0.16)',
+        accentBorder: 'rgba(156, 252, 207, 0.28)',
+        accentGlow: 'rgba(52, 211, 153, 0.2)',
+        accentSurface: 'linear-gradient(160deg, rgba(10, 49, 40, 0.98), rgba(7, 19, 22, 0.98))'
+      },
+      {
+        accent: '#f5cf45',
+        accentStrong: '#fff1a9',
+        accentSoft: 'rgba(245, 207, 69, 0.16)',
+        accentBorder: 'rgba(255, 241, 169, 0.3)',
+        accentGlow: 'rgba(245, 207, 69, 0.18)',
+        accentSurface: 'linear-gradient(160deg, rgba(56, 42, 9, 0.98), rgba(19, 16, 9, 0.98))'
+      },
+      {
+        accent: '#ff6b6b',
+        accentStrong: '#ffb1b1',
+        accentSoft: 'rgba(255, 107, 107, 0.14)',
+        accentBorder: 'rgba(255, 177, 177, 0.28)',
+        accentGlow: 'rgba(255, 107, 107, 0.18)',
+        accentSurface: 'linear-gradient(160deg, rgba(60, 16, 21, 0.98), rgba(20, 10, 14, 0.98))'
+      }
+    ];
+    return palettes[hash % palettes.length];
   }
 
   function teamThemeStyle(seed) {
@@ -79,30 +106,9 @@
     return activePage === href;
   }
 
-  function currentTheme() {
-    try {
-      return localStorage.getItem('theme') === 'light' ? 'light' : 'dark';
-    } catch (_) {
-      return 'dark';
-    }
-  }
-
-  function applyTheme(theme) {
-    const nextTheme = theme === 'light' ? 'light' : 'dark';
-    document.documentElement.classList.toggle('light', nextTheme === 'light');
-    document.documentElement.setAttribute('data-theme', nextTheme);
-    try {
-      localStorage.setItem('theme', nextTheme);
-    } catch (_) {}
-  }
-
-  function bindThemeToggle(root) {
-    const toggle = root.querySelector('[data-theme-toggle]');
-    if (!toggle) return;
-    toggle.checked = currentTheme() === 'light';
-    toggle.addEventListener('change', () => {
-      applyTheme(toggle.checked ? 'light' : 'dark');
-    });
+  function applyTheme() {
+    document.documentElement.classList.remove('light');
+    document.documentElement.setAttribute('data-theme', 'dark');
   }
 
   function bindHeaderSearch(root) {
@@ -216,19 +222,6 @@
                 <option value="teams">Teams</option>
               </select>
             </form>
-            <label class="theme-switch" title="Toggle light mode">
-              <input type="checkbox" data-theme-toggle aria-label="Toggle light mode">
-              <span class="theme-slider">
-                <span class="theme-star theme-star-1"></span>
-                <span class="theme-star theme-star-2"></span>
-                <span class="theme-star theme-star-3"></span>
-                <svg class="theme-cloud" viewBox="0 0 100 60" fill="white">
-                  <ellipse cx="50" cy="45" rx="40" ry="15"></ellipse>
-                  <ellipse cx="35" cy="38" rx="20" ry="18"></ellipse>
-                  <ellipse cx="60" cy="33" rx="25" ry="22"></ellipse>
-                </svg>
-              </span>
-            </label>
           </div>
         </div>
       </header>
@@ -257,7 +250,7 @@
 
   function renderLayout(activePage, pageTitle, options) {
     ensureFavicon();
-    applyTheme(currentTheme());
+    applyTheme();
     const root = byId('app');
     if (!root) return;
     const opts = options && typeof options === 'object' ? options : {};
@@ -285,7 +278,6 @@
         </main>
       </div>
     `;
-    bindThemeToggle(root);
     bindHeaderSearch(root);
   }
 
@@ -335,7 +327,6 @@
     showError,
     parseLineupEntries,
     statIcons,
-    applyTheme,
     teamTheme,
     teamThemeStyle
   };
