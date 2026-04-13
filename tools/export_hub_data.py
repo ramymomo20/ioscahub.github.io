@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import json
 import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -14,6 +15,9 @@ except ImportError:
     asyncpg = None
 
 
+STEAM_ID64_BASE = 76561197960265728
+
+
 def _dt_to_iso(value: Any) -> Any:
     if isinstance(value, datetime):
         if value.tzinfo is None:
@@ -22,17 +26,94 @@ def _dt_to_iso(value: Any) -> Any:
     return value
 
 
-def _record_to_dict(record: asyncpg.Record | dict | None) -> dict:
+def _record_to_dict(record: asyncpg.Record | dict | None) -> dict[str, Any]:
     if not record:
         return {}
     return {k: _dt_to_iso(v) for k, v in dict(record).items()}
 
 
-def _records_to_dicts(records: list[asyncpg.Record]) -> list[dict]:
+def _records_to_dicts(records: list[asyncpg.Record]) -> list[dict[str, Any]]:
     return [_record_to_dict(r) for r in records]
 
 
-async def _fetch_recent_matches(conn: asyncpg.Connection, limit: int) -> list[dict]:
+def _default_discord_avatar(discord_id: Any) -> str:
+    try:
+        seed = int(str(discord_id)) % 5
+    except Exception:
+        seed = 0
+    return f"https://cdn.discordapp.com/embed/avatars/{seed}.png"
+
+
+def _discord_avatar_url(discord_id: Any) -> str:
+    if discord_id is None:
+        return _default_discord_avatar(discord_id)
+    raw = str(discord_id).strip()
+    if not raw:
+        return _default_discord_avatar(discord_id)
+    return f"https://unavatar.io/discord/{raw}"
+
+
+def _steam_to_steam64(steam_id: Any) -> str | None:
+    raw = str(steam_id or "").strip()
+    if not raw:
+        return None
+    if raw.isdigit() and len(raw) >= 16:
+        return raw
+    match = re.match(r"^STEAM_[0-5]:([0-1]):(\d+)$", raw, flags=re.IGNORECASE)
+    if match:
+        y = int(match.group(1))
+        z = int(match.group(2))
+        return str(STEAM_ID64_BASE + (z * 2) + y)
+    return None
+
+
+def _steam_profile_url(steam_id: Any) -> str | None:
+    raw = str(steam_id or "").strip()
+    if not raw:
+        return None
+    steam64 = _steam_to_steam64(raw)
+    if steam64:
+        return f"https://steamcommunity.com/profiles/{steam64}"
+    return f"https://steamcommunity.com/search/users/#text={raw}"
+
+
+def _steam_avatar_proxy_url(steam64: Any) -> str | None:
+    raw = str(steam64 or "").strip()
+    if not raw:
+        return None
+    return f"https://unavatar.io/steam/{raw}"
+
+
+def _decorate_player_rows(payload: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    for item in payload:
+        item["avatar_url"] = _discord_avatar_url(item.get("discord_id"))
+        item["avatar_fallback_url"] = _default_discord_avatar(item.get("discord_id"))
+        item["steam_profile_url"] = _steam_profile_url(item.get("steam_id"))
+        steam64 = _steam_to_steam64(item.get("steam_id"))
+        if steam64:
+            item["steam_id64"] = steam64
+            item["display_avatar_url"] = _steam_avatar_proxy_url(steam64) or item["avatar_url"]
+        else:
+            item["display_avatar_url"] = item["avatar_url"]
+    return payload
+
+
+async def _fetch_summary(conn: asyncpg.Connection) -> dict[str, Any]:
+    row = await conn.fetchrow(
+        """
+        SELECT
+            (SELECT COUNT(*) FROM IOSCA_PLAYERS) AS players_total,
+            (SELECT COUNT(*) FROM IOSCA_TEAMS) AS teams_total,
+            (SELECT COUNT(*) FROM MATCH_STATS) AS matches_total,
+            (SELECT COUNT(*) FROM TOURNAMENTS) AS tournaments_total,
+            (SELECT COUNT(*) FROM TOURNAMENTS WHERE status = 'active') AS active_tournaments_total,
+            (SELECT COUNT(*) FROM IOS_SERVERS WHERE is_active = TRUE) AS active_servers_total
+        """
+    )
+    return _record_to_dict(row)
+
+
+async def _fetch_matches(conn: asyncpg.Connection, limit: int) -> dict[str, Any]:
     rows = await conn.fetch(
         """
         SELECT
@@ -48,6 +129,8 @@ async def _fetch_recent_matches(conn: asyncpg.Connection, limit: int) -> list[di
             COALESCE(at.guild_icon, '') AS away_team_icon,
             m.home_score,
             m.away_score,
+            m.extratime,
+            m.penalties,
             tmeta.tournament_id,
             tmeta.tournament_name
         FROM MATCH_STATS m
@@ -66,422 +149,363 @@ async def _fetch_recent_matches(conn: asyncpg.Connection, limit: int) -> list[di
         """,
         limit,
     )
-    return _records_to_dicts(rows)
+    return {"matches": _records_to_dicts(rows)}
 
 
-async def _fetch_teams_summary(conn: asyncpg.Connection) -> list[dict]:
+async def _fetch_rankings(conn: asyncpg.Connection, limit: int) -> dict[str, Any]:
     rows = await conn.fetch(
         """
+        WITH latest_pos AS (
+            SELECT DISTINCT ON (steam_id)
+                steam_id,
+                UPPER(NULLIF(TRIM(position), '')) AS position
+            FROM PLAYER_MATCH_DATA
+            WHERE position IS NOT NULL AND position <> ''
+            ORDER BY steam_id, updated_at DESC NULLS LAST, id DESC
+        )
         SELECT
-            t.guild_id,
-            t.guild_name,
-            COALESCE(t.guild_icon, '') AS guild_icon,
-            COALESCE(t.average_rating, 5.0) AS average_rating,
-            COALESCE(stats.matches_played, 0) AS matches_played,
-            COALESCE(stats.wins, 0) AS wins,
-            COALESCE(stats.draws, 0) AS draws,
-            COALESCE(stats.losses, 0) AS losses,
-            COALESCE(stats.goals_for, 0) AS goals_for,
-            COALESCE(stats.goals_against, 0) AS goals_against
-        FROM IOSCA_TEAMS t
-        LEFT JOIN LATERAL (
-            SELECT
-                COUNT(*) AS matches_played,
-                SUM(
-                    CASE WHEN m.home_guild_id = t.guild_id THEN m.home_score
-                         WHEN m.away_guild_id = t.guild_id THEN m.away_score
-                         ELSE 0 END
-                ) AS goals_for,
-                SUM(
-                    CASE WHEN m.home_guild_id = t.guild_id THEN m.away_score
-                         WHEN m.away_guild_id = t.guild_id THEN m.home_score
-                         ELSE 0 END
-                ) AS goals_against,
-                SUM(
-                    CASE
-                        WHEN m.home_guild_id = t.guild_id AND m.home_score > m.away_score THEN 1
-                        WHEN m.away_guild_id = t.guild_id AND m.away_score > m.home_score THEN 1
-                        ELSE 0
-                    END
-                ) AS wins,
-                SUM(
-                    CASE WHEN m.home_score = m.away_score THEN 1 ELSE 0 END
-                ) AS draws,
-                SUM(
-                    CASE
-                        WHEN m.home_guild_id = t.guild_id AND m.home_score < m.away_score THEN 1
-                        WHEN m.away_guild_id = t.guild_id AND m.away_score < m.home_score THEN 1
-                        ELSE 0
-                    END
-                ) AS losses
-            FROM MATCH_STATS m
-            WHERE m.home_guild_id = t.guild_id OR m.away_guild_id = t.guild_id
-        ) AS stats ON TRUE
-        ORDER BY stats.matches_played DESC NULLS LAST, t.guild_name ASC
-        """
-    )
-    output = []
-    for row in rows:
-        item = _record_to_dict(row)
-        item["goal_diff"] = int(item.get("goals_for", 0)) - int(item.get("goals_against", 0))
-        output.append(item)
-    return output
-
-
-async def _fetch_tournaments(conn: asyncpg.Connection) -> list[dict]:
-    tournaments = await conn.fetch(
-        """
-        SELECT
-            id,
-            name,
-            format,
-            status,
-            num_teams,
-            points_win,
-            points_draw,
-            points_loss,
-            created_at,
-            updated_at
-        FROM TOURNAMENTS
-        ORDER BY
-            CASE status WHEN 'active' THEN 0 WHEN 'ended' THEN 1 ELSE 2 END,
-            updated_at DESC
-        """
+            p.steam_id,
+            p.discord_id,
+            p.discord_name,
+            lp.position,
+            p.rating,
+            p.rating_updated_at
+        FROM IOSCA_PLAYERS p
+        JOIN latest_pos lp ON lp.steam_id = p.steam_id
+        WHERE p.discord_id IS NOT NULL
+          AND p.rating IS NOT NULL
+          AND p.rating::text <> 'NaN'
+          AND lp.position <> 'UNKNOWN'
+          AND NOT EXISTS (
+              SELECT 1
+              FROM IOSCA_PLAYERS owner
+              JOIN LATERAL jsonb_array_elements_text(COALESCE(owner.linked_steam_ids, '[]'::jsonb)) AS linked(value) ON TRUE
+              WHERE lower(trim(linked.value)) = lower(trim(p.steam_id::text))
+                AND lower(trim(owner.steam_id::text)) <> lower(trim(p.steam_id::text))
+          )
+        ORDER BY p.rating DESC NULLS LAST, p.discord_name ASC
+        LIMIT $1
+        """,
+        limit,
     )
 
-    result: list[dict] = []
-    for tournament_row in tournaments:
-        tournament = _record_to_dict(tournament_row)
-        tournament_id = tournament_row["id"]
+    players = _decorate_player_rows(_records_to_dicts(rows))
 
-        standings = await conn.fetch(
+    def best_for(positions: set[str]) -> dict[str, Any] | None:
+        for player in players:
+            pos = str(player.get("position") or "").upper()
+            if pos in positions:
+                return player
+        return None
+
+    widgets = {
+        "best_goalkeeper": best_for({"GK"}),
+        "best_defender": best_for({"LB", "RB", "CB", "DEF"}),
+        "best_midfielder": best_for({"CM", "LM", "RM", "MID"}),
+        "best_attacker": best_for({"CF", "LW", "RW", "ST", "ATT"}),
+    }
+    return {"players": players, "widgets": widgets}
+
+
+async def _fetch_players(conn: asyncpg.Connection, limit: int) -> dict[str, Any]:
+    try:
+        rows = await conn.fetch(
             """
-            WITH teams AS (
-                SELECT
-                    tt.guild_id,
-                    COALESCE(tt.team_name_snapshot, it.guild_name, CONCAT('Team ', tt.guild_id::text)) AS team_name,
-                    COALESCE(tt.team_icon_snapshot, it.guild_icon, '') AS team_icon
-                FROM TOURNAMENT_TEAMS tt
-                LEFT JOIN IOSCA_TEAMS it ON it.guild_id = tt.guild_id
-                WHERE tt.tournament_id = $1
+            WITH latest_pos AS (
+                SELECT DISTINCT ON (steam_id)
+                    steam_id,
+                    UPPER(NULLIF(TRIM(position), '')) AS position
+                FROM PLAYER_MATCH_DATA
+                WHERE position IS NOT NULL AND position <> ''
+                ORDER BY steam_id, updated_at DESC NULLS LAST, id DESC
             ),
-            fixture_base AS (
-                SELECT
-                    f.id,
-                    f.home_guild_id,
-                    f.away_guild_id,
-                    COALESCE(ht.guild_name, f.home_name_raw, '') AS home_name,
-                    COALESCE(at.guild_name, f.away_name_raw, '') AS away_name,
-                    f.played_match_stats_id,
-                    COALESCE(f.is_draw_home, FALSE) AS is_draw_home,
-                    COALESCE(f.is_draw_away, FALSE) AS is_draw_away,
-                    COALESCE(f.is_forfeit_home, FALSE) AS is_forfeit_home,
-                    COALESCE(f.is_forfeit_away, FALSE) AS is_forfeit_away,
-                    COALESCE(f.forfeit_score, 10)::int AS forfeit_score
-                FROM TOURNAMENT_FIXTURES f
-                LEFT JOIN IOSCA_TEAMS ht ON ht.guild_id = f.home_guild_id
-                LEFT JOIN IOSCA_TEAMS at ON at.guild_id = f.away_guild_id
-                WHERE f.tournament_id = $1
-                  AND f.home_guild_id IS NOT NULL
-                  AND f.away_guild_id IS NOT NULL
-                  AND (
-                        COALESCE(f.is_played, FALSE) = TRUE
-                     OR f.played_match_stats_id IS NOT NULL
-                     OR COALESCE(f.is_draw_home, FALSE) = TRUE
-                     OR COALESCE(f.is_draw_away, FALSE) = TRUE
-                     OR COALESCE(f.is_forfeit_home, FALSE) = TRUE
-                     OR COALESCE(f.is_forfeit_away, FALSE) = TRUE
-                  )
-            ),
-            played_matches AS (
-                SELECT
-                    fb.home_guild_id AS home_id,
-                    fb.away_guild_id AS away_id,
-                    CASE
-                        WHEN m.home_guild_id = fb.home_guild_id THEN COALESCE(m.home_score, 0)::int
-                        WHEN m.away_guild_id = fb.home_guild_id THEN COALESCE(m.away_score, 0)::int
-                        WHEN regexp_replace(lower(COALESCE(m.home_team_name, '')), '[^a-z0-9]+', '', 'g')
-                           = regexp_replace(lower(COALESCE(fb.home_name, '')), '[^a-z0-9]+', '', 'g')
-                        THEN COALESCE(m.home_score, 0)::int
-                        WHEN regexp_replace(lower(COALESCE(m.away_team_name, '')), '[^a-z0-9]+', '', 'g')
-                           = regexp_replace(lower(COALESCE(fb.home_name, '')), '[^a-z0-9]+', '', 'g')
-                        THEN COALESCE(m.away_score, 0)::int
-                        ELSE COALESCE(m.home_score, 0)::int
-                    END AS home_score,
-                    CASE
-                        WHEN m.home_guild_id = fb.away_guild_id THEN COALESCE(m.home_score, 0)::int
-                        WHEN m.away_guild_id = fb.away_guild_id THEN COALESCE(m.away_score, 0)::int
-                        WHEN regexp_replace(lower(COALESCE(m.home_team_name, '')), '[^a-z0-9]+', '', 'g')
-                           = regexp_replace(lower(COALESCE(fb.away_name, '')), '[^a-z0-9]+', '', 'g')
-                        THEN COALESCE(m.home_score, 0)::int
-                        WHEN regexp_replace(lower(COALESCE(m.away_team_name, '')), '[^a-z0-9]+', '', 'g')
-                           = regexp_replace(lower(COALESCE(fb.away_name, '')), '[^a-z0-9]+', '', 'g')
-                        THEN COALESCE(m.away_score, 0)::int
-                        ELSE COALESCE(m.away_score, 0)::int
-                    END AS away_score
-                FROM fixture_base fb
-                JOIN MATCH_STATS m ON m.id = fb.played_match_stats_id
-                WHERE COALESCE(fb.is_draw_home, FALSE) = FALSE
-                  AND COALESCE(fb.is_draw_away, FALSE) = FALSE
-                  AND COALESCE(fb.is_forfeit_home, FALSE) = FALSE
-                  AND COALESCE(fb.is_forfeit_away, FALSE) = FALSE
-            ),
-            draw_matches AS (
-                SELECT
-                    fb.home_guild_id AS home_id,
-                    fb.away_guild_id AS away_id,
-                    0::int AS home_score,
-                    0::int AS away_score
-                FROM fixture_base fb
-                WHERE COALESCE(fb.is_draw_home, FALSE) = TRUE
-                  AND COALESCE(fb.is_draw_away, FALSE) = TRUE
-            ),
-            forfeits AS (
-                SELECT
-                    fb.home_guild_id AS home_id,
-                    fb.away_guild_id AS away_id,
-                    CASE WHEN COALESCE(fb.is_forfeit_home, FALSE) THEN 0::int ELSE fb.forfeit_score END AS home_score,
-                    CASE WHEN COALESCE(fb.is_forfeit_away, FALSE) THEN 0::int ELSE fb.forfeit_score END AS away_score
-                FROM fixture_base fb
-                WHERE COALESCE(fb.is_forfeit_home, FALSE) = TRUE
-                   OR COALESCE(fb.is_forfeit_away, FALSE) = TRUE
-            ),
-            all_matches AS (
-                SELECT * FROM played_matches
-                UNION ALL
-                SELECT * FROM draw_matches
-                UNION ALL
-                SELECT * FROM forfeits
-            ),
-            team_rows AS (
-                SELECT
-                    home_id AS guild_id,
-                    1 AS matches_played,
-                    CASE WHEN home_score > away_score THEN 1 ELSE 0 END AS wins,
-                    CASE WHEN home_score = away_score THEN 1 ELSE 0 END AS draws,
-                    CASE WHEN home_score < away_score THEN 1 ELSE 0 END AS losses,
-                    home_score AS goals_for,
-                    away_score AS goals_against
-                FROM all_matches
-                UNION ALL
-                SELECT
-                    away_id AS guild_id,
-                    1 AS matches_played,
-                    CASE WHEN away_score > home_score THEN 1 ELSE 0 END AS wins,
-                    CASE WHEN away_score = home_score THEN 1 ELSE 0 END AS draws,
-                    CASE WHEN away_score < home_score THEN 1 ELSE 0 END AS losses,
-                    away_score AS goals_for,
-                    home_score AS goals_against
-                FROM all_matches
-            ),
-            agg AS (
-                SELECT
-                    guild_id,
-                    SUM(matches_played)::int AS matches_played,
-                    SUM(wins)::int AS wins,
-                    SUM(draws)::int AS draws,
-                    SUM(losses)::int AS losses,
-                    SUM(goals_for)::int AS goals_for,
-                    SUM(goals_against)::int AS goals_against
-                FROM team_rows
-                GROUP BY guild_id
-            ),
-            points_cfg AS (
-                SELECT
-                    COALESCE(t.points_win, 3)::int AS points_win,
-                    COALESCE(t.points_draw, 1)::int AS points_draw,
-                    COALESCE(t.points_loss, 0)::int AS points_loss
-                FROM TOURNAMENTS t
-                WHERE t.id = $1
+            team_members AS (
+                SELECT DISTINCT ON (member_id)
+                    member_id,
+                    t.guild_id,
+                    t.guild_name,
+                    t.guild_icon
+                FROM IOSCA_TEAMS t
+                JOIN LATERAL jsonb_array_elements(COALESCE(t.players, '[]'::jsonb)) AS roster(entry) ON TRUE
+                CROSS JOIN LATERAL (
+                    SELECT NULLIF(TRIM(roster.entry->>'id'), '') AS member_id
+                ) AS member
+                WHERE member.member_id IS NOT NULL
+                ORDER BY member_id, t.updated_at DESC NULLS LAST, t.created_at DESC NULLS LAST, t.guild_name ASC
             )
             SELECT
-                t.guild_id,
-                t.team_name,
-                t.team_icon,
-                COALESCE(a.matches_played, 0) AS matches_played,
-                COALESCE(a.wins, 0) AS wins,
-                COALESCE(a.draws, 0) AS draws,
-                COALESCE(a.losses, 0) AS losses,
-                COALESCE(a.goals_for, 0) AS goals_for,
-                COALESCE(a.goals_against, 0) AS goals_against,
-                (COALESCE(a.goals_for, 0) - COALESCE(a.goals_against, 0)) AS goal_diff,
-                (
-                    COALESCE(a.wins, 0) * pc.points_win +
-                    COALESCE(a.draws, 0) * pc.points_draw +
-                    COALESCE(a.losses, 0) * pc.points_loss
-                ) AS points
-            FROM teams t
-            CROSS JOIN points_cfg pc
-            LEFT JOIN agg a ON a.guild_id = t.guild_id
-            ORDER BY points DESC, goal_diff DESC, goals_for DESC, team_name ASC
+                p.steam_id,
+                p.discord_id,
+                p.discord_name,
+                COALESCE(lp.position, 'N/A') AS position,
+                NULLIF(TRIM(p.main_role), '') AS main_role,
+                COALESCE(p.display_main_role_rating, p.rating) AS rating,
+                p.rating AS legacy_rating,
+                p.main_role_rating,
+                p.display_main_role_rating,
+                COALESCE(p.total_appearances, 0) AS total_appearances,
+                COALESCE(p.total_minutes, 0) AS total_minutes,
+                p.registered_at,
+                p.last_active,
+                p.last_match_at,
+                tm.guild_id AS current_team_id,
+                tm.guild_name AS current_team_name,
+                tm.guild_icon AS current_team_icon
+            FROM IOSCA_PLAYERS p
+            LEFT JOIN latest_pos lp ON lp.steam_id = p.steam_id
+            LEFT JOIN team_members tm ON tm.member_id = p.discord_id::text
+            WHERE p.discord_id IS NOT NULL
+              AND COALESCE(p.display_main_role_rating, p.rating) IS NOT NULL
+              AND COALESCE(p.display_main_role_rating, p.rating)::text <> 'NaN'
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM IOSCA_PLAYERS owner
+                  JOIN LATERAL jsonb_array_elements_text(COALESCE(owner.linked_steam_ids, '[]'::jsonb)) AS linked(value) ON TRUE
+                  WHERE lower(trim(linked.value)) = lower(trim(p.steam_id::text))
+                    AND lower(trim(owner.steam_id::text)) <> lower(trim(p.steam_id::text))
+              )
+            ORDER BY COALESCE(p.display_main_role_rating, p.rating) DESC NULLS LAST, p.discord_name ASC
+            LIMIT $1
             """,
-            tournament_id,
+            limit,
         )
-
-        fixtures = await conn.fetch(
+    except Exception:
+        rows = await conn.fetch(
             """
+            WITH latest_pos AS (
+                SELECT DISTINCT ON (steam_id)
+                    steam_id,
+                    UPPER(NULLIF(TRIM(position), '')) AS position
+                FROM PLAYER_MATCH_DATA
+                WHERE position IS NOT NULL AND position <> ''
+                ORDER BY steam_id, updated_at DESC NULLS LAST, id DESC
+            ),
+            player_totals AS (
+                SELECT
+                    steam_id,
+                    COUNT(DISTINCT match_id::text) AS total_appearances,
+                    COALESCE(SUM(time_played), 0) AS total_minutes,
+                    MAX(updated_at) AS last_match_at
+                FROM PLAYER_MATCH_DATA
+                GROUP BY steam_id
+            ),
+            team_members AS (
+                SELECT DISTINCT ON (member_id)
+                    member_id,
+                    t.guild_id,
+                    t.guild_name,
+                    t.guild_icon
+                FROM IOSCA_TEAMS t
+                JOIN LATERAL jsonb_array_elements(COALESCE(t.players, '[]'::jsonb)) AS roster(entry) ON TRUE
+                CROSS JOIN LATERAL (
+                    SELECT NULLIF(TRIM(roster.entry->>'id'), '') AS member_id
+                ) AS member
+                WHERE member.member_id IS NOT NULL
+                ORDER BY member_id, t.updated_at DESC NULLS LAST, t.created_at DESC NULLS LAST, t.guild_name ASC
+            )
             SELECT
-                f.id,
-                f.week_number,
-                COALESCE(f.week_label, CONCAT('Week ', COALESCE(f.week_number::text, '?'))) AS week_label,
-                COALESCE(ht.guild_name, f.home_name_raw, 'Home') AS home_team_name,
-                COALESCE(at.guild_name, f.away_name_raw, 'Away') AS away_team_name,
-                COALESCE(ht.guild_icon, '') AS home_team_icon,
-                COALESCE(at.guild_icon, '') AS away_team_icon,
-                f.is_active,
-                f.is_played,
-                f.played_at
-            FROM TOURNAMENT_FIXTURES f
-            LEFT JOIN IOSCA_TEAMS ht ON ht.guild_id = f.home_guild_id
-            LEFT JOIN IOSCA_TEAMS at ON at.guild_id = f.away_guild_id
-            WHERE f.tournament_id = $1
-            ORDER BY f.week_number NULLS LAST, f.id ASC
+                p.steam_id,
+                p.discord_id,
+                p.discord_name,
+                COALESCE(lp.position, 'N/A') AS position,
+                NULL::text AS main_role,
+                p.rating,
+                p.rating AS legacy_rating,
+                NULL::numeric AS main_role_rating,
+                NULL::numeric AS display_main_role_rating,
+                COALESCE(pt.total_appearances, 0) AS total_appearances,
+                COALESCE(pt.total_minutes, 0) AS total_minutes,
+                p.registered_at,
+                p.last_active,
+                COALESCE(pt.last_match_at, p.last_active) AS last_match_at,
+                tm.guild_id AS current_team_id,
+                tm.guild_name AS current_team_name,
+                tm.guild_icon AS current_team_icon
+            FROM IOSCA_PLAYERS p
+            LEFT JOIN latest_pos lp ON lp.steam_id = p.steam_id
+            LEFT JOIN player_totals pt ON pt.steam_id = p.steam_id
+            LEFT JOIN team_members tm ON tm.member_id = p.discord_id::text
+            WHERE p.discord_id IS NOT NULL
+              AND p.rating IS NOT NULL
+              AND p.rating::text <> 'NaN'
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM IOSCA_PLAYERS owner
+                  JOIN LATERAL jsonb_array_elements_text(COALESCE(owner.linked_steam_ids, '[]'::jsonb)) AS linked(value) ON TRUE
+                  WHERE lower(trim(linked.value)) = lower(trim(p.steam_id::text))
+                    AND lower(trim(owner.steam_id::text)) <> lower(trim(p.steam_id::text))
+              )
+            ORDER BY p.rating DESC NULLS LAST, p.discord_name ASC
+            LIMIT $1
             """,
-            tournament_id,
+            limit,
         )
 
-        top_players = await conn.fetch(
-            """
-            SELECT
-                tps.steam_id,
-                COALESCE(ip.discord_name, tps.player_name, 'Unknown') AS player_name,
-                tps.discord_id,
-                tps.team_guild_id,
-                COALESCE(it.guild_name, CONCAT('Team ', tps.team_guild_id::text)) AS team_name,
-                tps.matches_played,
-                tps.goals,
-                tps.assists,
-                tps.keeper_saves,
-                tps.interceptions,
-                tps.tackles
-            FROM TOURNAMENT_PLAYER_STATS tps
-            LEFT JOIN IOSCA_PLAYERS ip ON ip.steam_id = tps.steam_id
-            LEFT JOIN IOSCA_TEAMS it ON it.guild_id = tps.team_guild_id
-            WHERE tps.tournament_id = $1
-            ORDER BY tps.goals DESC, tps.assists DESC, tps.keeper_saves DESC, player_name ASC
-            LIMIT 20
-            """,
-            tournament_id,
-        )
-
-        recent_matches = await conn.fetch(
-            """
-            SELECT
-                m.id,
-                m.datetime,
-                COALESCE(ht.guild_name, m.home_team_name) AS home_team_name,
-                COALESCE(at.guild_name, m.away_team_name) AS away_team_name,
-                COALESCE(ht.guild_icon, '') AS home_team_icon,
-                COALESCE(at.guild_icon, '') AS away_team_icon,
-                m.home_score,
-                m.away_score
-            FROM TOURNAMENT_FIXTURES f
-            JOIN MATCH_STATS m ON m.id = f.played_match_stats_id
-            LEFT JOIN IOSCA_TEAMS ht ON ht.guild_id = m.home_guild_id
-            LEFT JOIN IOSCA_TEAMS at ON at.guild_id = m.away_guild_id
-            WHERE f.tournament_id = $1
-              AND f.played_match_stats_id IS NOT NULL
-              AND COALESCE(f.is_forfeit_home, FALSE) = FALSE
-              AND COALESCE(f.is_forfeit_away, FALSE) = FALSE
-            ORDER BY m.datetime DESC
-            LIMIT 10
-            """,
-            tournament_id,
-        )
-
-        tournament["standings"] = _records_to_dicts(standings)
-        tournament["fixtures"] = _records_to_dicts(fixtures)
-        tournament["top_players"] = _records_to_dicts(top_players)
-        tournament["recent_matches"] = _records_to_dicts(recent_matches)
-        result.append(tournament)
-
-    return result
+    return {"players": _decorate_player_rows(_records_to_dicts(rows))}
 
 
-async def _fetch_upcoming_schedules(conn: asyncpg.Connection) -> list[dict]:
+async def _fetch_teams(conn: asyncpg.Connection) -> dict[str, Any]:
     rows = await conn.fetch(
         """
         SELECT
-            s.id,
-            s.tournament_id,
-            t.name AS tournament_name,
-            s.proposed_time,
-            s.server_name,
-            s.status,
-            COALESCE(ht.guild_name, f.home_name_raw, 'Home') AS home_team_name,
-            COALESCE(at.guild_name, f.away_name_raw, 'Away') AS away_team_name
-        FROM TOURNAMENT_SCHEDULES s
-        JOIN TOURNAMENTS t ON t.id = s.tournament_id
-        JOIN TOURNAMENT_FIXTURES f ON f.id = s.fixture_id
-        LEFT JOIN IOSCA_TEAMS ht ON ht.guild_id = f.home_guild_id
-        LEFT JOIN IOSCA_TEAMS at ON at.guild_id = f.away_guild_id
-        WHERE s.status IN ('pending', 'countered', 'confirmed')
-          AND s.proposed_time >= NOW() - INTERVAL '12 hour'
-        ORDER BY s.proposed_time ASC
-        LIMIT 100
+            guild_id,
+            guild_name,
+            guild_icon,
+            captain_id,
+            captain_name,
+            average_rating,
+            created_at,
+            updated_at,
+            players
+        FROM IOSCA_TEAMS
+        ORDER BY guild_name ASC
         """
     )
-    return _records_to_dicts(rows)
+
+    payload = _records_to_dicts(rows)
+    for item in payload:
+        roster = item.get("players") or []
+        roster_ids: set[str] = set()
+        if isinstance(roster, str):
+            try:
+                roster = json.loads(roster)
+            except Exception:
+                roster = []
+        if isinstance(roster, list):
+            for entry in roster:
+                if isinstance(entry, dict) and entry.get("id") is not None:
+                    roster_id = str(entry.get("id")).strip()
+                    if roster_id:
+                        roster_ids.add(roster_id)
+        captain_id = str(item.get("captain_id") or "").strip()
+        if captain_id:
+            roster_ids.add(captain_id)
+        item["player_count"] = len(roster_ids)
+    return {"teams": payload}
 
 
-async def _fetch_hub_payload(conn: asyncpg.Connection, matches_limit: int) -> dict:
-    recent_matches, teams, tournaments, schedules = await asyncio.gather(
-        _fetch_recent_matches(conn, matches_limit),
-        _fetch_teams_summary(conn),
-        _fetch_tournaments(conn),
-        _fetch_upcoming_schedules(conn),
+async def _fetch_tournaments(conn: asyncpg.Connection) -> dict[str, Any]:
+    rows = await conn.fetch(
+        """
+        SELECT
+            t.id,
+            t.name,
+            t.format,
+            t.status,
+            t.num_teams,
+            t.league_count,
+            t.created_at,
+            t.updated_at,
+            COALESCE(COUNT(DISTINCT tf.id), 0) AS fixtures_total,
+            COALESCE(
+                COUNT(
+                    DISTINCT CASE
+                        WHEN COALESCE(tf.is_played, FALSE)
+                          OR COALESCE(tf.is_draw_home, FALSE)
+                          OR COALESCE(tf.is_draw_away, FALSE)
+                          OR COALESCE(tf.is_forfeit_home, FALSE)
+                          OR COALESCE(tf.is_forfeit_away, FALSE)
+                        THEN tf.id
+                    END
+                ),
+                0
+            ) AS fixtures_played,
+            COALESCE(
+                COUNT(
+                    DISTINCT CASE
+                        WHEN tf.played_match_stats_id IS NOT NULL THEN tf.played_match_stats_id
+                    END
+                ),
+                0
+            ) AS matches_linked
+        FROM TOURNAMENTS t
+        LEFT JOIN TOURNAMENT_FIXTURES tf ON tf.tournament_id = t.id
+        GROUP BY t.id
+        ORDER BY CASE t.status WHEN 'active' THEN 0 WHEN 'ended' THEN 1 ELSE 2 END, t.updated_at DESC
+        """
     )
-
-    active_tournaments = [t for t in tournaments if str(t.get("status", "")).lower() == "active"]
-    payload = {
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-        "summary": {
-            "teams_total": len(teams),
-            "matches_total": len(recent_matches),
-            "tournaments_total": len(tournaments),
-            "active_tournaments_total": len(active_tournaments),
-            "upcoming_schedules_total": len(schedules),
-        },
-        "recent_matches": recent_matches,
-        "teams": teams,
-        "tournaments": tournaments,
-        "upcoming_schedules": schedules,
-    }
-    return payload
+    return {"tournaments": _records_to_dicts(rows)}
 
 
-async def _run(db_url: str, output_file: Path, matches_limit: int) -> int:
+def _write_json(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=True), encoding="utf-8")
+
+
+async def _run(
+    db_url: str,
+    legacy_output_file: Path,
+    matches_limit: int,
+    players_limit: int,
+    rankings_limit: int,
+) -> int:
     if asyncpg is None:
         print("Missing dependency: asyncpg")
         print("Install it with: pip install -r tools/requirements.txt")
         return 2
 
-    output_file.parent.mkdir(parents=True, exist_ok=True)
+    output_dir = legacy_output_file.parent
+    output_dir.mkdir(parents=True, exist_ok=True)
+
     conn = await asyncpg.connect(db_url)
     try:
-        payload = await _fetch_hub_payload(conn, matches_limit=matches_limit)
+        generated_at = datetime.now(timezone.utc).isoformat()
+        summary, matches_payload, rankings_payload, players_payload, teams_payload, tournaments_payload = await asyncio.gather(
+            _fetch_summary(conn),
+            _fetch_matches(conn, matches_limit),
+            _fetch_rankings(conn, rankings_limit),
+            _fetch_players(conn, players_limit),
+            _fetch_teams(conn),
+            _fetch_tournaments(conn),
+        )
     finally:
         await conn.close()
 
-    output_file.write_text(json.dumps(payload, indent=2, ensure_ascii=True), encoding="utf-8")
-    print(f"Hub data exported -> {output_file}")
-    print(f"Generated at: {payload['generated_at']}")
+    home_payload = {
+        "generated_at": generated_at,
+        "summary": summary,
+        "matches": {"matches": list(matches_payload.get("matches", []))[:12]},
+        "rankings": rankings_payload,
+        "teams": teams_payload,
+        "tournaments": tournaments_payload,
+    }
+
+    legacy_payload = {
+        "generated_at": generated_at,
+        "summary": summary,
+        "recent_matches": list(matches_payload.get("matches", []))[:200],
+        "teams": teams_payload.get("teams", []),
+        "tournaments": tournaments_payload.get("tournaments", []),
+        "upcoming_schedules": [],
+    }
+
+    files_to_write: dict[Path, dict[str, Any]] = {
+        legacy_output_file: legacy_payload,
+        output_dir / "home.json": home_payload,
+        output_dir / "matches.json": {"generated_at": generated_at, **matches_payload},
+        output_dir / "rankings.json": {"generated_at": generated_at, **rankings_payload},
+        output_dir / "players.json": {"generated_at": generated_at, **players_payload},
+        output_dir / "teams.json": {"generated_at": generated_at, **teams_payload},
+        output_dir / "tournaments.json": {"generated_at": generated_at, **tournaments_payload},
+    }
+
+    for path, payload in files_to_write.items():
+        _write_json(path, payload)
+        print(f"Hub data exported -> {path}")
+
+    print(f"Generated at: {generated_at}")
     print(
         "Totals: "
-        f"teams={payload['summary']['teams_total']}, "
-        f"matches={payload['summary']['matches_total']}, "
-        f"tournaments={payload['summary']['tournaments_total']}, "
-        f"schedules={payload['summary']['upcoming_schedules_total']}"
+        f"players={summary.get('players_total', 0)}, "
+        f"teams={summary.get('teams_total', 0)}, "
+        f"matches={summary.get('matches_total', 0)}, "
+        f"tournaments={summary.get('tournaments_total', 0)}"
     )
     return 0
 
 
 def main() -> int:
-    default_db_url = (
-        os.getenv("SUPABASE_DB_URL")
-        or os.getenv("SUPABASE_POOLER_URL")
-        or ""
-    ).strip()
+    default_db_url = (os.getenv("SUPABASE_DB_URL") or os.getenv("SUPABASE_POOLER_URL") or "").strip()
     parser = argparse.ArgumentParser(description="Export IOSCA hub JSON for GitHub Pages.")
     parser.add_argument(
         "--db-url",
@@ -491,13 +515,25 @@ def main() -> int:
     parser.add_argument(
         "--out",
         default="data/hub.json",
-        help="Output JSON file path.",
+        help="Legacy output file path. Page-specific JSON files will be written beside it.",
     )
     parser.add_argument(
         "--matches-limit",
         type=int,
+        default=3000,
+        help="How many recent matches to export for the static match browser.",
+    )
+    parser.add_argument(
+        "--players-limit",
+        type=int,
+        default=3000,
+        help="How many players to export for the static player browser.",
+    )
+    parser.add_argument(
+        "--rankings-limit",
+        type=int,
         default=200,
-        help="How many recent matches to export.",
+        help="How many ranked players to export.",
     )
     args = parser.parse_args()
 
@@ -506,7 +542,15 @@ def main() -> int:
         print("Missing DB URL. Set SUPABASE_DB_URL or SUPABASE_POOLER_URL, or pass --db-url.")
         return 2
 
-    return asyncio.run(_run(db_url, Path(args.out), args.matches_limit))
+    return asyncio.run(
+        _run(
+            db_url=db_url,
+            legacy_output_file=Path(args.out),
+            matches_limit=int(args.matches_limit),
+            players_limit=int(args.players_limit),
+            rankings_limit=int(args.rankings_limit),
+        )
+    )
 
 
 if __name__ == "__main__":

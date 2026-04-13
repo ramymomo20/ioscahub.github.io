@@ -1,6 +1,6 @@
 (async function () {
   const { renderLayout, byId, esc, fmtDateTime, showError } = window.HubUI;
-  renderLayout("index.html", "Welcome to the Official Hub of IOSoccer CA.", {
+  renderLayout("index.html", "Welcome to the IOS Central America Community", {
     eyebrow: "IOSCA Community Hub",
   });
 
@@ -49,13 +49,36 @@
   }
 
   try {
-    const [summary, matchesRes, tournamentsRes, rankingsRes, teamsRes] = await Promise.all([
-      window.HubApi.summary(),
-      window.HubApi.matches(12),
-      window.HubApi.tournaments(),
-      window.HubApi.rankings(8),
-      window.HubApi.teams(),
+    let homePayload;
+    try {
+      homePayload = await window.HubStatic.home();
+    } catch (_) {
+      const [summary, matchesRes, tournamentsRes, rankingsRes, teamsRes] = await Promise.all([
+        window.HubApi.summary(),
+        window.HubApi.matches(12),
+        window.HubApi.tournaments(),
+        window.HubApi.rankings(8),
+        window.HubApi.teams(),
+      ]);
+      homePayload = {
+        summary,
+        matches: matchesRes,
+        tournaments: tournamentsRes,
+        rankings: rankingsRes,
+        teams: teamsRes,
+      };
+    }
+    const summary = homePayload.summary || {};
+    const matchesRes = homePayload.matches || {};
+    const tournamentsRes = homePayload.tournaments || {};
+    const rankingsRes = homePayload.rankings || {};
+    const teamsRes = homePayload.teams || {};
+    const [serversResult, discordResult] = await Promise.allSettled([
+      window.HubApi.servers(),
+      window.HubApi.discord(),
     ]);
+    const serversData = serversResult.status === "fulfilled" ? serversResult.value : {};
+    const discordData = discordResult.status === "fulfilled" ? discordResult.value : {};
 
     const widgets = [
       ["Players", fmtCount(summary.players_total)],
@@ -79,11 +102,18 @@
       .filter((team) => Number.isFinite(team.rating))
       .sort((left, right) => right.rating - left.rating || left.name.localeCompare(right.name))
       .slice(0, 6);
+    const servers = (Array.isArray(serversData.servers) ? serversData.servers : [])
+      .slice()
+      .sort((left, right) => Number(Boolean(right.is_active)) - Number(Boolean(left.is_active)))
+      .slice(0, 2);
+    const discordInvite = String(discordData.discord_invite_url || "").trim();
 
     page.innerHTML = `
       <section class="home-actions-row">
+        <a class="player-browser-action" href="matches.html">See Matches</a>
+        <a class="player-browser-action" href="players.html">See Players</a>
+        <a class="player-browser-action" href="teams.html">See Teams</a>
         <a class="home-action-btn" href="rankings.html">View Leaderboards</a>
-        <a class="player-browser-action" href="teams.html">Browse Teams</a>
       </section>
 
       <section class="home-micro-grid compact">
@@ -154,6 +184,26 @@
                 </a>
               `).join("") : '<div class="empty">No team ratings available.</div>'}
             </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="home-section-head">
+          <h2>Come Join Us</h2>
+        </div>
+        <div class="home-join-grid">
+          ${servers.length ? servers.map((server) => `
+            <div class="home-join-card">
+              <strong>${esc(server.name || "Server")}</strong>
+              <span>${server.is_active ? "Online" : "Offline"}${server.current_players !== undefined && server.current_players !== null ? ` &middot; ${esc(String(server.current_players))} players` : ""}</span>
+              ${server.connect_link ? `<a class="player-browser-action primary" href="${esc(server.connect_link)}">Connect</a>` : '<span class="meta">Connect link unavailable</span>'}
+            </div>
+          `).join("") : '<div class="empty">Server info is unavailable right now.</div>'}
+          <div class="home-join-card discord">
+            <strong>Discord Community</strong>
+            <span>Join the hub, rules, announcements, and match coordination.</span>
+            ${discordInvite ? `<a class="player-browser-action primary" target="_blank" rel="noreferrer" href="${esc(discordInvite)}">Join Discord</a>` : '<span class="meta">Discord invite unavailable</span>'}
           </div>
         </div>
       </section>

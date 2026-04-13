@@ -34,7 +34,12 @@
   renderLoading();
 
   try {
-    const data = await window.HubApi.matches({ limit: 3000 });
+    let data;
+    try {
+      data = await window.HubStatic.matches();
+    } catch (_) {
+      data = await window.HubApi.matches({ limit: 3000 });
+    }
     allMatches = (data.matches || []).map(normalizeMatch);
     tournamentOptions = buildDistinctOptions(allMatches.map((match) => match.tournamentName).filter(Boolean));
     teamOptions = buildDistinctOptions(

@@ -57,6 +57,11 @@
     return base;
   }
 
+  function staticUrl(fileName) {
+    const safeFile = String(fileName || '').replace(/^\/+/, '');
+    return new URL(`../data/${safeFile}`, window.location.href).toString();
+  }
+
   function toQuery(params) {
     const entries = Object.entries(params || {}).filter(([, v]) => v !== undefined && v !== null && v !== '');
     if (!entries.length) return '';
@@ -70,6 +75,15 @@
     if (!response.ok) {
       const text = await response.text();
       throw new Error(text || `Request failed (${response.status})`);
+    }
+    return response.json();
+  }
+
+  async function staticRequest(fileName) {
+    const response = await fetch(staticUrl(fileName), { headers: { 'Accept': 'application/json' } });
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(text || `Static request failed (${response.status})`);
     }
     return response.json();
   }
@@ -89,5 +103,14 @@
     teamH2H: (team1, team2, limit) => request('/team-h2h', { team1, team2, limit }),
     servers: () => request('/servers'),
     discord: () => request('/discord')
+  };
+
+  window.HubStatic = {
+    home: () => staticRequest('home.json'),
+    rankings: () => staticRequest('rankings.json'),
+    players: () => staticRequest('players.json'),
+    matches: () => staticRequest('matches.json'),
+    teams: () => staticRequest('teams.json'),
+    tournaments: () => staticRequest('tournaments.json'),
   };
 })();

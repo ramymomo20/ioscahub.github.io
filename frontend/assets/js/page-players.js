@@ -44,7 +44,12 @@
   renderLoading();
 
   try {
-    const data = await window.HubApi.players({ limit: 3000 });
+    let data;
+    try {
+      data = await window.HubStatic.players();
+    } catch (_) {
+      data = await window.HubApi.players({ limit: 3000 });
+    }
     allPlayers = (data.players || []).map(normalizePlayer);
     roleOptions = buildRoleOptions(allPlayers);
     teamOptions = buildTeamOptions(allPlayers);

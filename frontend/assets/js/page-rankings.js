@@ -87,7 +87,12 @@
   }
 
   try {
-    const data = await window.HubApi.rankings(100);
+    let data;
+    try {
+      data = await window.HubStatic.rankings();
+    } catch (_) {
+      data = await window.HubApi.rankings(100);
+    }
     const players = Array.isArray(data.players) ? data.players : [];
     const widgets = data.widgets || {};
     const topThree = [players[0], players[1], players[2]];

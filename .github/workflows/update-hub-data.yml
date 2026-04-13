@@ -43,12 +43,12 @@ jobs:
       - name: Commit data if changed
         if: env.HUB_EXPORT_SKIP != '1'
         run: |
-          if git diff --quiet data/hub.json; then
+          if git diff --quiet -- data/; then
             echo "No changes to commit"
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/hub.json
+          git add data/
           git commit -m "chore: refresh hub data"
           git push

@@ -4,7 +4,12 @@
   const page = byId('page');
 
   try {
-    const data = await window.HubApi.tournaments();
+    let data;
+    try {
+      data = await window.HubStatic.tournaments();
+    } catch (_) {
+      data = await window.HubApi.tournaments();
+    }
     const rows = data.tournaments || [];
 
     page.innerHTML = `

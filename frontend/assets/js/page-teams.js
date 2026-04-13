@@ -21,7 +21,12 @@
   renderLoading();
 
   try {
-    const data = await window.HubApi.teams();
+    let data;
+    try {
+      data = await window.HubStatic.teams();
+    } catch (_) {
+      data = await window.HubApi.teams();
+    }
     allTeams = (data.teams || []).map(normalizeTeam);
     render();
   } catch (err) {
