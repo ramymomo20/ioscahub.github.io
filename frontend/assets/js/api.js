@@ -1,5 +1,92 @@
 (function () {
   const FALLBACK_API_BASE = 'https://iosca-api.sparked.network/api';
+  const STORAGE_PREFIX = 'IOSCA_HUB_CACHE:';
+  const responseCache = new Map();
+  const inflightRequests = new Map();
+
+  function readStoredCache(key) {
+    try {
+      const raw = localStorage.getItem(STORAGE_PREFIX + key);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object' || parsed.expiresAt <= Date.now()) {
+        localStorage.removeItem(STORAGE_PREFIX + key);
+        return null;
+      }
+      return parsed.payload;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function writeStoredCache(key, payload, ttlMs) {
+    if (!ttlMs || ttlMs <= 0) return;
+    try {
+      localStorage.setItem(
+        STORAGE_PREFIX + key,
+        JSON.stringify({
+          expiresAt: Date.now() + ttlMs,
+          payload,
+        })
+      );
+    } catch (_) {}
+  }
+
+  function readCache(key) {
+    const cached = responseCache.get(key);
+    if (!cached) return null;
+    if (cached.expiresAt <= Date.now()) {
+      responseCache.delete(key);
+      return null;
+    }
+    return cached.payload;
+  }
+
+  function writeCache(key, payload, ttlMs) {
+    if (!ttlMs || ttlMs <= 0) return payload;
+    responseCache.set(key, {
+      expiresAt: Date.now() + ttlMs,
+      payload,
+    });
+    writeStoredCache(key, payload, ttlMs);
+    return payload;
+  }
+
+  function ttlForPath(path) {
+    if (path === '/health') return 0;
+    if (path === '/servers') return 30000;
+    if (path === '/summary') return 60000;
+    if (path === '/matches' || path === '/match') return 180000;
+    if (path === '/discord') return 300000;
+    if (path === '/players' || path === '/player') return 300000;
+    if (path === '/teams' || path === '/team' || path === '/team-h2h') return 300000;
+    if (path === '/rankings' || path === '/tournaments') return 300000;
+    return 120000;
+  }
+
+  async function fetchJson(url, ttlMs, fetchOptions) {
+    const cached = readCache(url) || readStoredCache(url);
+    if (cached) return cached;
+
+    const inflight = inflightRequests.get(url);
+    if (inflight) return inflight;
+
+    const requestPromise = fetch(url, fetchOptions)
+      .then(async (response) => {
+        if (!response.ok) {
+          const text = await response.text();
+          throw new Error(text || `Request failed (${response.status})`);
+        }
+        const payload = await response.json();
+        return writeCache(url, payload, ttlMs);
+      })
+      .finally(() => {
+        inflightRequests.delete(url);
+      });
+
+    inflightRequests.set(url, requestPromise);
+    return requestPromise;
+  }
 
   function normalizeApiBase(value) {
     const raw = String(value || '').trim();
@@ -71,21 +158,17 @@
   async function request(path, params) {
     const base = assertApiConfigured();
     const url = base + path + toQuery(params);
-    const response = await fetch(url, { headers: { 'Accept': 'application/json' } });
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(text || `Request failed (${response.status})`);
-    }
-    return response.json();
+    return fetchJson(url, ttlForPath(path), {
+      headers: { 'Accept': 'application/json' }
+    });
   }
 
   async function staticRequest(fileName) {
-    const response = await fetch(staticUrl(fileName), { headers: { 'Accept': 'application/json' } });
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(text || `Static request failed (${response.status})`);
-    }
-    return response.json();
+    const url = staticUrl(fileName);
+    return fetchJson(url, 600000, {
+      cache: 'force-cache',
+      headers: { 'Accept': 'application/json' }
+    });
   }
 
   window.HubApi = {

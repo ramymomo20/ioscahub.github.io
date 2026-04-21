@@ -7,9 +7,11 @@ import asyncpg
 
 try:
     from .config import settings
+    from ios_bot.db.stats_moderation import ensure_stats_moderation_schema
 except ImportError:
     # Allow direct module execution in non-package runtime contexts.
     from config import settings  # type: ignore
+    from ios_bot.db.stats_moderation import ensure_stats_moderation_schema  # type: ignore
 
 
 class Database:
@@ -21,13 +23,20 @@ class Database:
             return
         if not settings.db_url:
             raise RuntimeError("SUPABASE_DB_URL is not configured")
+
+        async def _init_connection(connection: asyncpg.Connection) -> None:
+            await connection.execute("SET search_path TO hub, public")
+
         self.pool = await asyncpg.create_pool(
             settings.db_url,
             min_size=2,
             max_size=12,
             command_timeout=90,
             statement_cache_size=0,
+            init=_init_connection,
         )
+        async with self.pool.acquire() as connection:
+            await ensure_stats_moderation_schema(connection)
 
     async def disconnect(self) -> None:
         if self.pool is not None:
