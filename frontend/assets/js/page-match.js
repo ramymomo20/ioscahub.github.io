@@ -939,14 +939,18 @@
     if (!mvp) {
       return `
         <section class="mvp-widget">
-          <div class="mvp-header">
-            <div class="mvp-title">
-              <img src="assets/icons/gold-medal-icon.png" alt="MVP">
-              <span>MVP</span>
+          <div class="mvp-layout empty">
+            <div class="mvp-copy">
+              <div class="mvp-header">
+                <div class="mvp-title">
+                  <img src="assets/icons/gold-medal-icon.png" alt="MVP">
+                  <span>MVP</span>
+                </div>
+              </div>
+              <div class="mvp-name">No MVP Available</div>
+              <div class="mvp-reason">No player stats were found for this match.</div>
             </div>
           </div>
-          <div class="mvp-name">No MVP Available</div>
-          <div class="mvp-reason">No player stats were found for this match.</div>
         </section>
       `;
     }
@@ -981,19 +985,183 @@
     return `
       <section class="mvp-widget">
         <img class="mvp-bg-bot" src="assets/icons/entrenador-icon.png" alt="">
-        <div class="mvp-header">
-          <div class="mvp-title">
-            <img src="assets/icons/gold-medal-icon.png" alt="MVP medal">
-            <span>MVP</span>
+        <div class="mvp-layout">
+          <div class="mvp-copy">
+            <div class="mvp-header">
+              <div class="mvp-title">
+                <img src="assets/icons/gold-medal-icon.png" alt="MVP medal">
+                <span>MVP</span>
+              </div>
+              <div class="mvp-chip">${esc(position)}</div>
+            </div>
+            <div class="mvp-name-row">
+              <div class="mvp-name">${esc(playerName)}</div>
+              <div class="mvp-rating">
+                <span>Match Rating</span>
+                <strong>${esc(rating.toFixed(1))}/10</strong>
+              </div>
+            </div>
+            <div class="mvp-reason">${esc(mvpReason(mvp))}</div>
           </div>
-          <div class="mvp-rating">${esc(rating.toFixed(1))}/10</div>
+          <div class="mvp-stats-grid">${statsHtml}</div>
         </div>
-        <div class="mvp-name"><span class="mvp-name-emoji" title="MVP">🏆</span>${esc(playerName)}</div>
-        <div class="mvp-sub">${esc(position)}</div>
-        <div class="mvp-reason">${esc(mvpReason(mvp))}</div>
-        <div class="mvp-stats-grid">${statsHtml}</div>
       </section>
     `;
+  }
+
+  function v2LogoSrc(url, teamName) {
+    const direct = String(url || "").trim();
+    if (direct) return direct;
+    return /iosca/i.test(String(teamName || "")) ? "assets/icons/iosca-icon.png" : "assets/icons/soccer-ball-icon.png";
+  }
+
+  function v2Stat(label, value, sublabel) {
+    return `
+      <article class="v2-stat-tile">
+        <span class="v2-label">${esc(label)}</span>
+        <strong>${esc(value)}</strong>
+        ${sublabel ? `<div class="v2-subtitle">${esc(sublabel)}</div>` : ""}
+      </article>
+    `;
+  }
+
+  function v2StoryPerformers(story, fallbackPlayers) {
+    const performers = Array.isArray(story && story.top_performers) && story.top_performers.length
+      ? story.top_performers
+      : (fallbackPlayers || [])
+          .slice()
+          .sort((a, b) => playerRating10(b) - playerRating10(a))
+          .slice(0, 3)
+          .map((player) => ({
+            steam_id: player.steam_id,
+            player_name: safeName(player),
+            position: player.position,
+            rating: playerRating10(player),
+            goals: pickNum(player, ["goals"]),
+            assists: pickNum(player, ["assists"]),
+            saves: pickNum(player, ["keeper_saves", "keeperSaves"]),
+            tackles: pickNum(player, ["tackles"]),
+            interceptions: pickNum(player, ["interceptions"])
+          }));
+
+    if (!performers.length) {
+      return '<div class="v2-mini-card">No tracked player stats for this match.</div>';
+    }
+
+    return performers.map((player, index) => {
+      const name = player.player_name || player.name || player.steam_id || "Unknown";
+      const statLine = [
+        Number(player.goals || 0) ? `${player.goals}G` : "",
+        Number(player.assists || 0) ? `${player.assists}A` : "",
+        Number(player.saves || 0) ? `${player.saves}SV` : "",
+        Number(player.interceptions || 0) ? `${player.interceptions}INT` : "",
+        Number(player.tackles || 0) ? `${player.tackles}TKL` : ""
+      ].filter(Boolean).join(" / ") || "Impact tracked";
+      const href = player.steam_id ? `player.html?steam_id=${encodeURIComponent(player.steam_id)}` : "#";
+      return `
+        <a class="v2-performer" href="${esc(href)}">
+          <span class="v2-rank">${index + 1}</span>
+          <span>
+            <strong>${esc(name)}</strong>
+            <span class="v2-subtitle">${esc(String(player.position || "N/A").toUpperCase())} - ${esc(statLine)}</span>
+          </span>
+          <span class="v2-rating compact"><strong>${esc(Number(player.rating || 0).toFixed(1))}</strong><span>RTG</span></span>
+        </a>
+      `;
+    }).join("");
+  }
+
+  function v2Momentum(story, homeName, awayName) {
+    const rows = Array.isArray(story && story.momentum) ? story.momentum : [];
+    if (!rows.length) return '<div class="v2-mini-card">No event momentum available.</div>';
+    return rows.map((item) => {
+      const home = Number(item.home || 0);
+      const away = Number(item.away || 0);
+      const max = Math.max(home, away, 1);
+      return `
+        <div class="v2-mini-card v2-momentum-row">
+          <div>
+            <span class="v2-label">${esc(item.label || "Phase")}</span>
+            <strong>${esc(homeName)} ${esc(home)} - ${esc(away)} ${esc(awayName)}</strong>
+          </div>
+          <div class="v2-momentum-bars">
+            <span class="home" style="width:${esc(((home / max) * 100).toFixed(0))}%"></span>
+            <span class="away" style="width:${esc(((away / max) * 100).toFixed(0))}%"></span>
+          </div>
+        </div>
+      `;
+    }).join("");
+  }
+
+  function v2Duel(story) {
+    const duel = story && story.duel;
+    if (!duel || !duel.home || !duel.away) {
+      return '<div class="v2-mini-card">No head-to-head duel available.</div>';
+    }
+    return `
+      <div class="v2-scoreboard v2-duel">
+        <div>
+          <div class="v2-label">Home Catalyst</div>
+          <strong>${esc(duel.home.player_name || "Unknown")}</strong>
+          <span>${esc(Number(duel.home.rating || 0).toFixed(1))} RTG - ${esc(duel.home.goals || 0)}G</span>
+        </div>
+        <div class="v2-scoreline">VS</div>
+        <div>
+          <div class="v2-label">Away Catalyst</div>
+          <strong>${esc(duel.away.player_name || "Unknown")}</strong>
+          <span>${esc(Number(duel.away.rating || 0).toFixed(1))} RTG - ${esc(duel.away.goals || 0)}G</span>
+        </div>
+      </div>
+    `;
+  }
+
+  function v2StoryTimeline(story) {
+    const rows = Array.isArray(story && story.timeline) ? story.timeline.slice(0, 8) : [];
+    if (!rows.length) return '<div class="v2-mini-card">No timeline markers available.</div>';
+    return rows.map((item) => {
+      const meta = STAT_META[item.kind] || STAT_META.goal;
+      return `
+        <div class="v2-mini-card v2-timeline-item">
+          <span class="v2-rank">${esc(item.minute ? `${item.minute}'` : meta.chip)}</span>
+          <span>
+            <strong>${esc(item.player_name || "Unknown")}</strong>
+            <span class="v2-subtitle">${esc(String(item.side || "").toUpperCase())} - ${esc(meta.label)}</span>
+          </span>
+        </div>
+      `;
+    }).join("");
+  }
+
+  function v2CommunityVotes(story) {
+    const groups = story && story.community_votes && typeof story.community_votes === "object"
+      ? story.community_votes
+      : {};
+    const labels = {
+      mvp: "Community MVP",
+      goal_of_match: "Goal of Match",
+      surprise_player: "Surprise Player"
+    };
+    const rows = Object.keys(labels).map((key) => {
+      const leaders = Array.isArray(groups[key]) ? groups[key].slice(0, 3) : [];
+      const total = leaders.reduce((sum, item) => sum + Number(item.votes || 0), 0);
+      return `
+        <div class="v2-mini-card">
+          <span class="v2-label">${esc(labels[key])}</span>
+          ${leaders.length ? leaders.map((item) => {
+            const votes = Number(item.votes || 0);
+            const pct = total > 0 ? Math.max(8, (votes / total) * 100) : 0;
+            return `
+              <div class="v2-vote-row">
+                <strong>${esc(item.target_key || "Unknown")}</strong>
+                <span>${esc(votes)} vote${votes === 1 ? "" : "s"}</span>
+                <div class="v2-bar"><span style="width:${esc(pct.toFixed(0))}%"></span></div>
+              </div>
+            `;
+          }).join("") : '<div class="v2-subtitle">No votes recorded yet.</div>'}
+        </div>
+      `;
+    });
+    return rows.join("");
   }
 
   (async function init() {
@@ -1028,74 +1196,148 @@
       const mvpKey = mvpIdentity(mvp);
       const homeStyle = teamThemeStyle(match.home_guild_id || match.home_team_name || "home");
       const awayStyle = teamThemeStyle(match.away_guild_id || match.away_team_name || "away");
+      const story = data.story || {};
+      const homeScore = Number(match.home_score ?? 0);
+      const awayScore = Number(match.away_score ?? 0);
+      const homeWon = homeScore > awayScore;
+      const awayWon = awayScore > homeScore;
+      const homeAgg = teamAggregateStats(homeStats);
+      const awayAgg = teamAggregateStats(awayStats);
+      const storyRecords = Array.isArray(story.records_triggered) && story.records_triggered.length
+        ? story.records_triggered
+        : [match.penalties ? "Penalty finish" : "", match.extratime ? "Extra-time match" : "", comebackFlag ? "Comeback result" : ""].filter(Boolean);
+      const mvpName = mvp ? safeName(mvp) : "Not awarded";
 
       page.innerHTML = `
-        <section class="match-panel match-shell">
-          <div class="match-top-row">
-            <div class="left">${esc(competitionLabel)}${whenLabel ? ` - ${esc(whenLabel)}` : ""}</div>
-            <div class="right">Full-time</div>
-          </div>
-
-          <div class="match-hero">
-            <div class="match-hero-grid">
-            <div class="match-side" style="${esc(homeStyle)}">
-              ${teamLogo(match.home_team_icon, match.home_team_name || "Home")}
-              <h2 class="match-team-name">${esc(match.home_team_name || "Home")}</h2>
-              ${teamEventSummaryHtml(match.home_team_name || "Home", match.home_team_icon, homeEvents, "home", match.home_score)}
-            </div>
-
-            <div class="match-vs-strip">
-              <span class="pill match-status-pill">Full-time</span>
-              <div class="match-team-score">${esc(match.home_score ?? 0)} - ${esc(match.away_score ?? 0)}</div>
-              <div class="flags" style="display:flex;flex-wrap:wrap;gap:8px;justify-content:center;">
-                ${match.extratime ? '<span class="badge">ET</span>' : ""}
-                ${match.penalties ? '<span class="badge">PEN</span>' : ""}
-                ${comebackFlag ? '<span class="badge">COMEBACK</span>' : ""}
+        <div class="hub-v2 match-v2">
+          <section class="v2-card tier-a">
+            <div class="v2-scoreboard">
+              <div class="v2-score-team ${homeWon ? "v2-winner" : ""}" style="${esc(homeStyle)}">
+                <img src="${esc(v2LogoSrc(match.home_team_icon, match.home_team_name || "Home"))}" alt="${esc(match.home_team_name || "Home")}">
+                <div>
+                  <div class="v2-kicker">Home</div>
+                  <h2 class="v2-title">${esc(match.home_team_name || "Home")}</h2>
+                </div>
+                ${teamEventSummaryHtml(match.home_team_name || "Home", match.home_team_icon, homeEvents, "home", match.home_score)}
               </div>
-              <div class="meta">${esc(matchDate)}</div>
-            </div>
 
-            <div class="match-side" style="${esc(awayStyle)}">
-              ${teamLogo(match.away_team_icon, match.away_team_name || "Away")}
-              <h2 class="match-team-name">${esc(match.away_team_name || "Away")}</h2>
-              ${teamEventSummaryHtml(match.away_team_name || "Away", match.away_team_icon, awayEvents, "away", match.away_score)}
-            </div>
-            </div>
-          </div>
+              <div class="v2-match-center">
+                <span class="v2-chip">Full-time</span>
+                <div class="v2-scoreline">${esc(homeScore)}-${esc(awayScore)}</div>
+                <div class="v2-chip-row">
+                  <span class="v2-chip">${esc(competitionLabel)}</span>
+                  <span class="v2-chip">${esc(match.game_type || "Unknown format")}</span>
+                  ${match.extratime ? '<span class="v2-chip">ET</span>' : ""}
+                  ${match.penalties ? '<span class="v2-chip">PEN</span>' : ""}
+                  ${comebackFlag ? '<span class="v2-chip">Comeback</span>' : ""}
+                </div>
+                <div class="v2-subtitle">${esc(matchDate)}${whenLabel ? ` - ${esc(whenLabel)}` : ""}</div>
+              </div>
 
-          <div class="match-meta-row">
-            <div class="match-kpi">
-              <span>Tournament</span>
-              <strong>${esc(match.tournament_name || "Independent Match")}</strong>
+              <div class="v2-score-team ${awayWon ? "v2-winner" : ""}" style="${esc(awayStyle)}">
+                <img src="${esc(v2LogoSrc(match.away_team_icon, match.away_team_name || "Away"))}" alt="${esc(match.away_team_name || "Away")}">
+                <div>
+                  <div class="v2-kicker">Away</div>
+                  <h2 class="v2-title">${esc(match.away_team_name || "Away")}</h2>
+                </div>
+                ${teamEventSummaryHtml(match.away_team_name || "Away", match.away_team_icon, awayEvents, "away", match.away_score)}
+              </div>
             </div>
-            <div class="match-kpi">
-              <span>Format</span>
-              <strong>${esc(match.game_type || "Unknown")}</strong>
-            </div>
-            <div class="match-kpi">
-              <span>Played</span>
-              <strong>${esc(matchDate)}</strong>
-            </div>
-            <div class="match-kpi">
-              <span>Status</span>
-              <strong>${match.penalties ? "Finished After Penalties" : match.extratime ? "Finished After Extra Time" : "Finished In Regulation"}</strong>
-            </div>
-          </div>
-        </section>
+          </section>
 
-        ${comparisonSectionHtml(
-          match.home_team_name || "Home",
-          match.away_team_name || "Away",
-          homeStats,
-          awayStats
-        )}
+          <section class="v2-grid four">
+            ${v2Stat("Tournament", match.tournament_name || "Independent", "Competition context")}
+            ${v2Stat("MVP", mvpName, mvp ? `${String(mvp.position || "N/A").toUpperCase()} - ${playerRating10(mvp).toFixed(1)} rating` : "No player stats")}
+            ${v2Stat("Total Shots", String((homeAgg.shotsOnGoal || 0) + (awayAgg.shotsOnGoal || 0)), "Shots on goal")}
+            ${v2Stat("Passes", String((homeAgg.passesCompleted || 0) + (awayAgg.passesCompleted || 0)), "Completed passes")}
+          </section>
 
-        ${mvpWidgetHtml(mvp)}
+          <section class="v2-grid three">
+            <article class="v2-card tier-b">
+              <div class="v2-section-head">
+                <div>
+                  <div class="v2-kicker">Star Power</div>
+                  <h3>Top Performers</h3>
+                </div>
+              </div>
+              <div class="v2-mini-card-list">${v2StoryPerformers(story, allStats)}</div>
+            </article>
 
-        <section class="lineup-pitches">
-          ${lineupCardHtml(match.home_team_name || "Home", match.home_team_icon, homeLineup, homeLookup, match.game_type, mvpKey)}
-          ${lineupCardHtml(match.away_team_name || "Away", match.away_team_icon, awayLineup, awayLookup, match.game_type, mvpKey)}
-        </section>
+            <article class="v2-card tier-b">
+              <div class="v2-section-head">
+                <div>
+                  <div class="v2-kicker">Match Story</div>
+                  <h3>Turning Point</h3>
+                </div>
+              </div>
+              <div class="v2-mini-card">
+                <span class="v2-label">Read</span>
+                <strong>${esc(story.turning_point || "The scoreline tells the main story for now.")}</strong>
+              </div>
+              <div class="v2-pill-list">
+                ${storyRecords.length ? storyRecords.map((item) => `<span class="v2-chip">${esc(item)}</span>`).join("") : '<span class="v2-chip">Standard finish</span>'}
+              </div>
+            </article>
+
+            <article class="v2-card tier-b">
+              <div class="v2-section-head">
+                <div>
+                  <div class="v2-kicker">Momentum</div>
+                  <h3>Control Windows</h3>
+                </div>
+              </div>
+              <div class="v2-mini-card-list">${v2Momentum(story, match.home_team_name || "Home", match.away_team_name || "Away")}</div>
+            </article>
+          </section>
+
+          <section class="v2-grid three">
+            <article class="v2-card tier-b">
+              <div class="v2-section-head">
+                <div>
+                  <div class="v2-kicker">Duel</div>
+                  <h3>Side Leaders</h3>
+                </div>
+              </div>
+              ${v2Duel(story)}
+            </article>
+
+            <article class="v2-card tier-b">
+              <div class="v2-section-head">
+                <div>
+                  <div class="v2-kicker">Timeline</div>
+                  <h3>Key Markers</h3>
+                </div>
+              </div>
+              <div class="v2-mini-card-list">${v2StoryTimeline(story)}</div>
+            </article>
+
+            <article class="v2-card tier-b">
+              <div class="v2-section-head">
+                <div>
+                  <div class="v2-kicker">Community</div>
+                  <h3>Vote Pulse</h3>
+                </div>
+              </div>
+              <div class="v2-mini-card-list">${v2CommunityVotes(story)}</div>
+            </article>
+          </section>
+
+          ${hasEvents ? eventMapSectionHtml(homeEvents, awayEvents) : ""}
+          ${showDerived ? derivedContextHtml(match.home_team_name || "Home", match.away_team_name || "Away", homeDerived, awayDerived) : ""}
+          ${comparisonSectionHtml(
+            match.home_team_name || "Home",
+            match.away_team_name || "Away",
+            homeStats,
+            awayStats
+          )}
+
+          ${mvpWidgetHtml(mvp)}
+
+          <section class="lineup-pitches">
+            ${lineupCardHtml(match.home_team_name || "Home", match.home_team_icon, homeLineup, homeLookup, match.game_type, mvpKey)}
+            ${lineupCardHtml(match.away_team_name || "Away", match.away_team_icon, awayLineup, awayLookup, match.game_type, mvpKey)}
+          </section>
+        </div>
       `;
     } catch (err) {
       showError(`Failed to load match detail: ${err.message}`);

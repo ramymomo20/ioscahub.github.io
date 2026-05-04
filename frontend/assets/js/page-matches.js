@@ -237,8 +237,8 @@
 
   function flagBadges(match) {
     const bits = [];
-    if (match.extratime) bits.push('<span class="badge">ET</span>');
-    if (match.penalties) bits.push('<span class="badge">PEN</span>');
+    if (match.extratime) bits.push('<span class="v2-chip">ET</span>');
+    if (match.penalties) bits.push('<span class="v2-chip">PEN</span>');
     return bits.join(" ");
   }
 
@@ -246,68 +246,66 @@
     return match.tournamentName || "Independent Match";
   }
 
+  function teamLogo(value) {
+    const icon = String(value || "").trim();
+    return icon || "assets/icons/iosca-icon.png";
+  }
+
+  function sideResultClass(match, side) {
+    const home = num(match.homeScore);
+    const away = num(match.awayScore);
+    const isHome = side === "home";
+    if (home === away) return "d";
+    if ((isHome && home > away) || (!isHome && away > home)) return "w";
+    return "l";
+  }
+
   function matchCard(match, index, instant) {
-    const scoreline = `${match.homeScore} - ${match.awayScore}`;
+    const scoreline = `${match.homeScore}-${match.awayScore}`;
     return `
-      <article class="match-browser-card${instant ? " instant" : ""}" style="--card-index:${index};">
-        <div class="match-browser-glow"></div>
-        <div class="match-browser-top">
-          <div class="match-browser-date">
-            <span>${esc(fmtDate(match.datetime))}</span>
-            <strong>${esc(match.gameType)}</strong>
-          </div>
-          <div class="match-browser-flags">${flagBadges(match) || '<span class="match-browser-muted">Standard</span>'}</div>
+      <a class="v2-card tier-b v2-archive-card${instant ? " instant" : ""}" href="match.html?id=${encodeURIComponent(match.id)}" style="--card-index:${index};">
+        <div class="v2-chip-row">
+          <span class="v2-chip">${esc(fmtDate(match.datetime))}</span>
+          <span class="v2-chip">${esc(match.gameType)}</span>
+          ${flagBadges(match) || '<span class="v2-chip">Standard</span>'}
         </div>
-
-        <a class="match-browser-link" href="match.html?id=${encodeURIComponent(match.id)}">
-          <div class="match-browser-teams">
-            <div class="match-browser-team home">
-              ${match.home_team_icon ? `<img src="${esc(match.home_team_icon)}" alt="${esc(match.homeTeamName)}">` : ""}
-              <span>${esc(match.homeTeamName)}</span>
-            </div>
-            <div class="match-browser-score">
-              <strong>${esc(scoreline)}</strong>
-              <span>${esc(match.totalGoals)} total goals</span>
-            </div>
-            <div class="match-browser-team away">
-              <span>${esc(match.awayTeamName)}</span>
-              ${match.away_team_icon ? `<img src="${esc(match.away_team_icon)}" alt="${esc(match.awayTeamName)}">` : ""}
-            </div>
+        <div class="v2-scoreboard compact">
+          <div class="v2-score-team">
+            <img src="${esc(teamLogo(match.home_team_icon))}" alt="${esc(match.homeTeamName)}">
+            <strong>${esc(match.homeTeamName)}</strong>
           </div>
-
-          <div class="match-browser-meta">
-            <span class="match-browser-meta-pill">${esc(tournamentLabel(match))}</span>
-            <span class="match-browser-meta-pill">${esc(match.displayDate)}</span>
+          <div class="v2-match-center">
+            <div class="v2-scoreline small">${esc(scoreline)}</div>
+            <div class="v2-subtitle">${esc(match.totalGoals)} total goals</div>
           </div>
-        </a>
-      </article>
+          <div class="v2-score-team">
+            <img src="${esc(teamLogo(match.away_team_icon))}" alt="${esc(match.awayTeamName)}">
+            <strong>${esc(match.awayTeamName)}</strong>
+          </div>
+        </div>
+        <div class="v2-subtitle">${esc(tournamentLabel(match))}</div>
+      </a>
     `;
   }
 
   function matchListRow(match, index, instant) {
     return `
-      <article class="match-list-row${instant ? " instant" : ""}" style="--card-index:${index};">
-        <div class="match-list-main">
-          <a class="match-list-link" href="match.html?id=${encodeURIComponent(match.id)}">
-            <span class="match-list-team home">${esc(match.homeTeamName)}</span>
-            <strong>${esc(`${match.homeScore} - ${match.awayScore}`)}</strong>
-            <span class="match-list-team away">${esc(match.awayTeamName)}</span>
-          </a>
-          <div class="match-list-subtitle">${esc(tournamentLabel(match))}</div>
-        </div>
-        <div class="match-list-cell">${esc(match.gameType)}</div>
-        <div class="match-list-cell">${flagBadges(match) || '<span class="match-browser-muted">-</span>'}</div>
-        <div class="match-list-cell">${esc(fmtDate(match.datetime))}</div>
-        <div class="match-list-cell">${esc(String(match.totalGoals))}</div>
-      </article>
+      <a class="v2-match-card v2-archive-row${instant ? " instant" : ""}" href="match.html?id=${encodeURIComponent(match.id)}" style="--card-index:${index};">
+        <span class="v2-result ${sideResultClass(match, "home")}">${esc(String(match.homeScore))}</span>
+        <span>
+          <strong>${esc(match.homeTeamName)} vs ${esc(match.awayTeamName)}</strong>
+          <span class="v2-subtitle">${esc(tournamentLabel(match))} - ${esc(match.gameType)} - ${esc(fmtDate(match.datetime))}</span>
+        </span>
+        <span class="v2-rating compact"><strong>${esc(String(match.awayScore))}</strong><span>AWY</span></span>
+      </a>
     `;
   }
 
   function renderLoading() {
     clearSearchTimer();
     page.innerHTML = `
-      <section class="matches-browser">
-        <div class="matches-toolbar players-loading-shell">
+      <section class="hub-v2">
+        <div class="v2-card tier-a players-loading-shell">
           <div class="players-loading-bar"></div>
           <div class="players-loading-row">
             <div class="players-loading-pill"></div>
@@ -318,7 +316,7 @@
         </div>
         <div class="matches-card-grid">
           ${Array.from({ length: 6 }).map((_, index) => `
-            <article class="match-browser-card skeleton" style="--card-index:${index};">
+            <article class="v2-card tier-b skeleton" style="--card-index:${index};">
               <div class="player-browser-skeleton shimmer"></div>
             </article>
           `).join("")}
@@ -339,15 +337,54 @@
     syncStateToUrl();
     const matches = filteredMatches();
     const metrics = summaryMetrics(matches);
+    const featured = matches[0] || null;
 
     page.innerHTML = `
-      <section class="matches-browser">
-        <div class="matches-toolbar">
+      <section class="hub-v2">
+        <section class="v2-card tier-a">
+          <div class="v2-section-head">
+            <div>
+              <div class="v2-kicker">Fixture Feed</div>
+              <h3>Match Archive</h3>
+            </div>
+            <div class="v2-chip-row">
+              <span class="v2-chip">${esc(String(metrics.visible))} visible</span>
+              <span class="v2-chip">${esc(String(metrics.totalGoals))} goals</span>
+              <span class="v2-chip">${esc(String(metrics.special))} special finishes</span>
+            </div>
+          </div>
+
+          ${featured ? `
+            <a class="v2-archive-hero" href="match.html?id=${encodeURIComponent(featured.id)}">
+              <div class="v2-scoreboard">
+                <div class="v2-score-team">
+                  <img src="${esc(teamLogo(featured.home_team_icon))}" alt="${esc(featured.homeTeamName)}">
+                  <strong>${esc(featured.homeTeamName)}</strong>
+                </div>
+                <div class="v2-match-center">
+                  <div class="v2-scoreline">${esc(`${featured.homeScore}-${featured.awayScore}`)}</div>
+                  <div class="v2-chip-row">
+                    <span class="v2-chip">${esc(featured.gameType)}</span>
+                    <span class="v2-chip">${esc(tournamentLabel(featured))}</span>
+                    ${flagBadges(featured)}
+                  </div>
+                  <div class="v2-subtitle">${esc(featured.displayDate)}</div>
+                </div>
+                <div class="v2-score-team">
+                  <img src="${esc(teamLogo(featured.away_team_icon))}" alt="${esc(featured.awayTeamName)}">
+                  <strong>${esc(featured.awayTeamName)}</strong>
+                </div>
+              </div>
+            </a>
+          ` : '<div class="v2-mini-card">No matches available.</div>'}
+        </section>
+
+        <div class="v2-card tier-b matches-toolbar">
           <div class="matches-toolbar-head">
             <div>
               <div class="players-section-kicker">Results Explorer</div>
               <h2 class="players-section-title">Search match history by teams, formats, dates, and tournaments</h2>
-              <div class="players-section-copy">Use the filters like a real results browser and keep the view shareable in the URL.</div>
+              <div class="players-section-copy">URL-driven filters stay shareable. The shell is new; the browse logic stays intact.</div>
             </div>
             <div class="players-view-toggle">
               <button type="button" class="players-view-btn ${state.view === "grid" ? "active" : ""}" data-view="grid">Card View</button>
@@ -434,25 +471,25 @@
           </div>
         </div>
 
-        <div class="players-overview-grid matches-overview-grid">
-          <article class="players-overview-card">
-            <span class="players-overview-label">Visible matches</span>
+        <div class="v2-grid four">
+          <article class="v2-stat-tile">
+            <span class="v2-label">Visible Matches</span>
             <strong>${esc(String(metrics.visible))}</strong>
           </article>
-          <article class="players-overview-card">
-            <span class="players-overview-label">Goals in view</span>
+          <article class="v2-stat-tile">
+            <span class="v2-label">Goals In View</span>
             <strong>${esc(String(metrics.totalGoals))}</strong>
           </article>
-          <article class="players-overview-card">
-            <span class="players-overview-label">Avg goals / match</span>
+          <article class="v2-stat-tile">
+            <span class="v2-label">Avg Goals / Match</span>
             <strong>${esc(metrics.avgGoals ? metrics.avgGoals.toFixed(2) : "0.00")}</strong>
           </article>
-          <article class="players-overview-card">
-            <span class="players-overview-label">Tournaments in view</span>
+          <article class="v2-stat-tile">
+            <span class="v2-label">Tournaments In View</span>
             <strong>${esc(String(metrics.tournaments))}</strong>
           </article>
-          <article class="players-overview-card">
-            <span class="players-overview-label">Special endings</span>
+          <article class="v2-stat-tile">
+            <span class="v2-label">Special Endings</span>
             <strong>${esc(String(metrics.special))}</strong>
           </article>
         </div>

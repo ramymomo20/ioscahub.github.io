@@ -120,11 +120,16 @@
     const accentStyle = teamThemeStyle(team.guild_id || team.guildName);
     return `
       <article class="team-browser-card" style="--card-index:${index};${accentStyle}">
-        <div class="team-browser-head">
+        <div class="team-browser-name-row">
+          <a class="team-browser-name" href="team.html?id=${encodeURIComponent(team.guild_id)}">${esc(team.guildName)}</a>
+        </div>
+        <div class="team-browser-center">
           <img class="team-browser-logo" src="${esc(team.guild_icon || fallbackLogo)}" alt="${esc(team.guildName)}" onerror="this.onerror=null;this.src='${fallbackLogo}';">
-          <div class="team-browser-title-wrap">
-            <a class="team-browser-name" href="team.html?id=${encodeURIComponent(team.guild_id)}">${esc(team.guildName)}</a>
-            <div class="team-browser-subtitle">Captain: ${esc(team.captainName)}</div>
+        </div>
+        <div class="team-browser-meta">
+          <div class="team-browser-captain">
+            <span>Captain</span>
+            <strong>${esc(team.captainName)}</strong>
           </div>
           <div class="team-browser-rating">
             <span>Rating</span>

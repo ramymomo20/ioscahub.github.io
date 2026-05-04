@@ -19,6 +19,16 @@
     const activity = data.activity || {};
     const records = Array.isArray(data.records) ? data.records : [];
     const team = data.team || {};
+    const honors = [
+      ...(Array.isArray(data.trophies) ? data.trophies : []),
+      ...(Array.isArray(data.awards) ? data.awards.map((item) => ({
+        trophy_type: item.award_key || item.award_scope || 'award',
+        title: item.title,
+        subtitle: item.subtitle || item.period_end,
+        awarded_at: item.period_end || item.period_start
+      })) : [])
+    ];
+    const careerEvents = Array.isArray(data.career_events) ? data.career_events : [];
     const roleBadge = p.role_badge || {};
     const memberRoles = Array.isArray(p.member_roles) ? p.member_roles : [];
     const fallbackAvatar = 'https://cdn.discordapp.com/embed/avatars/0.png';
@@ -287,182 +297,180 @@
       `;
     }
 
-    page.innerHTML = `
-      <div class="grid cols-2 player-top-grid">
-        <div class="player-left-stack">
-          <div class="card profile-hero-card" style="margin:0;">
-            <div class="profile-head">
-              <img class="profile-avatar-lg" src="${esc(p.display_avatar_url || p.steam_avatar_url || p.avatar_url || p.avatar_fallback_url || fallbackAvatar)}" alt="avatar" onerror="this.onerror=null;this.src='${fallbackAvatar}';">
-              <div class="profile-details">
-                <h2>${esc(p.discord_name || p.steam_name || 'Unknown')}</h2>
-                <div class="player-role-rating">
-                  <div class="role-box">
-                    <div class="k">Position</div>
-                    <div class="v">${esc(p.position || 'N/A')}</div>
-                  </div>
-                  <div class="role-box">
-                    <div class="k">Rating</div>
-                    <div class="v">${esc(fmtRating(p.rating))}</div>
-                  </div>
-                </div>
-                <div class="meta">Steam: ${esc(p.steam_id)}${p.steam_name ? ` | ${esc(p.steam_name)}` : ''}</div>
-                ${p.steam_profile_url ? `<div class="profile-link"><a target="_blank" rel="noreferrer" href="${esc(p.steam_profile_url)}">Open Steam profile</a></div>` : ''}
-                ${
-                  team.guild_id
-                    ? `
-                    <div class="player-team-chip">
-                      <img src="${esc(team.guild_icon || teamLogoFallback)}" alt="${esc(team.guild_name || 'Team')}" onerror="this.onerror=null;this.src='${teamLogoFallback}';">
-                      <span>Current team: <a href="team.html?id=${esc(team.guild_id)}">${esc(team.guild_name || 'Unknown Team')}</a></span>
-                    </div>
-                  `
-                    : `<div class="player-team-chip empty"><span>Current team: N/A</span></div>`
-                }
-                ${
-                  (roleBadge && (roleBadge.role_name || roleBadge.role_key || roleBadge.emoji_raw_value || roleBadge.emoji_url))
-                    ? `
-                    <div class="player-role-asset-chip">
-                      ${roleEmojiHtml(roleBadge)}
-                      <span>
-                        <strong>Role:</strong>
-                        ${esc(roleBadge.role_name || roleBadge.role_key || 'N/A')}
-                      </span>
-                    </div>
-                  `
-                    : ''
-                }
-                ${rolesSection()}
-              </div>
-            </div>
-            <div class="footer-note">Registered: ${fmtDateTime(p.registered_at)} | Last active: ${fmtDateTime(p.last_active)}</div>
-          </div>
+    function v2Stat(label, value) {
+      return `<div class="v2-stat-tile"><span class="v2-label">${esc(label)}</span><strong>${esc(value)}</strong></div>`;
+    }
 
-          <div class="card player-summary-card" style="margin:10px 0 0;">
-            <h3>Form & Trends</h3>
-            <div class="player-quick-summary">
-              <div class="quick-box">
-                <div class="k">W/D/L</div>
-                <div class="v">${esc(summary.wins || 0)}/${esc(summary.draws || 0)}/${esc(summary.losses || 0)}</div>
+    function v2AttributeList(attrs) {
+      const rows = Object.entries(attrs || {});
+      if (!rows.length) return '<div class="meta">No attribute data yet.</div>';
+      return `
+        <div class="v2-attribute-list">
+          ${rows.map(([key, value]) => `
+            <div class="v2-attribute">
+              <span class="v2-label">${esc(key)}</span>
+              <span class="v2-bar"><span style="width:${esc(Math.max(0, Math.min(100, Number(value) || 0)))}%"></span></span>
+              <strong>${esc(value)}</strong>
+            </div>
+          `).join('')}
+        </div>
+      `;
+    }
+
+    function v2Trend(items) {
+      const rows = Array.isArray(items) ? items : [];
+      if (!rows.length) return '<div class="meta">No trend data yet.</div>';
+      return `
+        <div class="v2-trend">
+          ${rows.map((item) => {
+            const rating = Number(item.rating || 0);
+            const height = Math.max(18, Math.min(100, rating * 10));
+            return `<span class="v2-trend-bar" title="${esc(item.opponent || 'Opponent')} - ${esc(rating ? rating.toFixed(1) : 'N/A')}" style="height:${esc(height)}%;"></span>`;
+          }).join('')}
+        </div>
+      `;
+    }
+
+    function v2RecentMatchCards(matches) {
+      const rows = Array.isArray(matches) ? matches : [];
+      if (!rows.length) return '<div class="meta">No recent matches.</div>';
+      return `
+        <div class="v2-match-card-list">
+          ${rows.slice(0, 8).map((m) => {
+            const result = String(m.result || '-').toLowerCase();
+            return `
+              <article class="v2-match-card">
+                <span class="v2-result ${esc(result)}">${esc(String(m.result || '-').toUpperCase())}</span>
+                <div>
+                  <strong><a href="match.html?id=${esc(m.match_id)}">${esc(m.home_team_name)} ${esc(m.home_score)} - ${esc(m.away_score)} ${esc(m.away_team_name)}</a></strong>
+                  <div class="v2-subtitle">${esc(fmtDateTime(m.datetime))} | ${esc(m.position || 'N/A')} | ${esc(competitionLabel(m))}</div>
+                </div>
+                <div class="v2-label">R ${esc(m.match_rating ? Number(m.match_rating).toFixed(1) : 'N/A')} | G ${esc(m.goals || 0)} | A ${esc(m.assists || 0)}</div>
+              </article>
+            `;
+          }).join('')}
+        </div>
+      `;
+    }
+
+    function v2Honors(items) {
+      const rows = Array.isArray(items) ? items : [];
+      if (!rows.length) return '<div class="meta">No honors recorded yet.</div>';
+      return `
+        <div class="v2-trophy-row">
+          ${rows.map((item) => `
+            <article class="v2-trophy">
+              <div class="v2-label">${esc(item.trophy_type || item.award_key || 'Honor')}</div>
+              <strong>${esc(item.title || 'Honor')}</strong>
+              <div class="v2-subtitle">${esc(item.subtitle || fmtDateTime(item.awarded_at))}</div>
+            </article>
+          `).join('')}
+        </div>
+      `;
+    }
+
+    function v2Timeline(items) {
+      const rows = Array.isArray(items) ? items : [];
+      if (!rows.length) return '<div class="meta">No career events recorded yet.</div>';
+      return `
+        <div class="v2-mini-card-list">
+          ${rows.slice(0, 10).map((item) => `
+            <div class="v2-mini-card">
+              <span class="v2-label">${esc(item.event_type || 'event')}</span>
+              <strong>${esc(item.title || 'Career Event')}</strong>
+              <div class="v2-subtitle">${esc(item.details || fmtDateTime(item.event_at))}</div>
+            </div>
+          `).join('')}
+        </div>
+      `;
+    }
+
+    const trendRatings = (data.form_trend || [])
+      .map((item) => Number(item.rating))
+      .filter((value) => Number.isFinite(value));
+    const avgRecentRating = trendRatings.length
+      ? (trendRatings.reduce((sum, value) => sum + value, 0) / trendRatings.length).toFixed(1)
+      : 'N/A';
+
+    page.innerHTML = `
+      <div class="hub-v2">
+        <section class="v2-card tier-a">
+          <div class="v2-hero">
+            <div class="v2-avatar-ring">
+              <img src="${esc(p.display_avatar_url || p.steam_avatar_url || p.avatar_url || p.avatar_fallback_url || fallbackAvatar)}" alt="avatar" onerror="this.onerror=null;this.src='${fallbackAvatar}';">
+            </div>
+            <div>
+              <div class="v2-kicker">Player Universe</div>
+              <h2 class="v2-display">${esc(p.discord_name || p.steam_name || 'Unknown')}</h2>
+              <div class="v2-badge-row">
+                <span class="v2-chip">${esc(p.position || 'N/A')}</span>
+                <span class="v2-chip">${esc(data.signature_role || 'Signature Role Pending')}</span>
+                ${team.guild_id ? `<a class="v2-chip" href="team.html?id=${esc(team.guild_id)}"><img src="${esc(team.guild_icon || teamLogoFallback)}" alt="">${esc(team.guild_name || 'Team')}</a>` : '<span class="v2-chip">Free Agent</span>'}
+                ${p.steam_profile_url ? `<a class="v2-chip" target="_blank" rel="noreferrer" href="${esc(p.steam_profile_url)}">Steam Profile</a>` : ''}
               </div>
-              <div class="quick-box">
-                <div class="k">Win Rate</div>
-                <div class="v">${esc(Number(summary.win_rate || 0).toFixed(1))}%</div>
-              </div>
-              <div class="quick-box">
-                <div class="k">Avg Goals</div>
-                <div class="v">${esc(Number(summary.avg_goals_per_match || 0).toFixed(2))}</div>
-              </div>
-              <div class="quick-box">
-                <div class="k">Avg Assists</div>
-                <div class="v">${esc(Number(summary.avg_assists_per_match || 0).toFixed(2))}</div>
-              </div>
-              <div class="quick-box">
-                <div class="k">S/Sub/B</div>
-                <div class="v">${esc(Number(summary.started_matches || 0))}/${esc(Number(summary.substitute_matches || 0))}/${esc(Number(summary.bench_matches || 0))}</div>
-              </div>
-              <div class="quick-box">
-                <div class="k">Clutch Actions</div>
-                <div class="v">${esc(Number(summary.clutch_action_events || 0))}</div>
-              </div>
-              <div class="quick-box">
-                <div class="k">Sub Impact (G/OG)</div>
-                <div class="v">${esc(Number(summary.sub_impact_goals || 0))}/${esc(Number(summary.sub_impact_own_goals || 0))}</div>
-              </div>
-              <div class="quick-box">
-                <div class="k">Sub Impact Events</div>
-                <div class="v">${esc(Number(summary.sub_impact_events || 0))}</div>
-              </div>
-              <div class="quick-form">
-                <div class="k">Last 5</div>
-                ${formStrip(summary.form_last5 || [])}
+              <p class="v2-subtitle">Registered ${esc(fmtDateTime(p.registered_at))}. Last active ${esc(fmtDateTime(p.last_active))}.</p>
+              ${rolesSection()}
+            </div>
+            <div>
+              <div class="v2-rating"><strong>${esc(fmtRating(p.rating))}</strong><span>Rating</span></div>
+              <div class="v2-snapshot" style="margin-top:16px;">
+                ${v2Stat('Avg Rating', avgRecentRating)}
+                ${v2Stat('Win Rate', `${Number(summary.win_rate || 0).toFixed(1)}%`)}
+                ${v2Stat('Goals', totalInt(['goals']))}
+                ${v2Stat('Assists', totalInt(['assists']))}
+                ${v2Stat('MOTM', recent.filter((m) => m.is_match_mvp).length)}
               </div>
             </div>
           </div>
-        </div>
-        <div class="card" style="margin:0;">
-          <h3>Performance Overview</h3>
-          <div class="grid cols-2">
-            <div class="stat"><div class="label">Matches</div><div class="value">${esc(matchesCount())}</div></div>
-            <div class="stat"><div class="label">Pass Accuracy</div><div class="value">${esc(pct(totals.avg_pass_accuracy, 1))}</div></div>
-          </div>
-          <div class="player-stats-grid">
-            ${categoryCard('Attacking', buildNumericLines([
-              { label: 'Goals', keys: ['goals'] },
-              { label: 'Assists', keys: ['assists'] },
-              { label: '2nd Assists', keys: ['second_assists', 'secondAssists'] },
-              { label: 'Shots', keys: ['shots'] },
-              { label: 'Shots on Goal', keys: ['shots_on_goal', 'shotsOnGoal'] },
-              { label: 'Offsides', keys: ['offsides'] }
-            ]))}
-            ${categoryCard('Playmaking', [
-              ...buildNumericLines([
-                { label: 'Chances Created', keys: ['chances_created', 'chancesCreated'] },
-                { label: 'Key Passes', keys: ['key_passes', 'keyPasses'] },
-                { label: 'Passes', keys: ['passes_attempted', 'passes'] },
-                { label: 'Passes Completed', keys: ['passes_completed', 'passesCompleted'] },
-                { label: 'Corners', keys: ['corners'] },
-                { label: 'Free Kicks', keys: ['free_kicks', 'freeKicks'] }
-              ]),
-              statLine('Pass Rate', passRateText())
-            ])}
-            ${categoryCard('Defensive', buildNumericLines([
-              { label: 'Interceptions', keys: ['interceptions'] },
-              { label: 'Tackles', keys: ['sliding_tackles_completed', 'slidingTacklesCompleted', 'tackles'] },
-              { label: 'Tackle Attempts', keys: ['tackles', 'sliding_tackles'] },
-              { label: 'Fouls', keys: ['fouls'] },
-              { label: 'Fouls Suffered', keys: ['fouls_suffered', 'foulsSuffered'] },
-              { label: 'Own Goals', keys: ['own_goals', 'ownGoals'] }
-            ]))}
-            ${categoryCard('Goalkeeper', [
-              ...buildNumericLines([
-                { label: 'Saves', keys: ['keeper_saves', 'keeperSaves'] },
-                { label: 'Saves Caught', keys: ['keeper_saves_caught', 'keeperSavesCaught'] },
-                { label: 'Goals Conceded', keys: ['goals_conceded', 'goalsConceded'] }
-              ]),
-              statLine('Save Rate', saveRateText())
-            ])}
-            ${categoryCard('Discipline & Physical', [
-              ...buildNumericLines([
-                { label: 'Yellow Cards', keys: ['yellow_cards', 'yellowCards'] },
-                { label: 'Red Cards', keys: ['red_cards', 'redCards'] },
-                { label: 'Penalties', keys: ['penalties'] }
-              ]),
-              ...(totalInt(['distance_covered', 'distanceCovered']) > 0
-                ? [statLine('Distance Covered', distanceKmText(totalNum(['distance_covered', 'distanceCovered'])))]
-                : []),
-              statLine('Possession', possessionText())
-            ])}
-          </div>
-        </div>
-      </div>
-      <div class="grid cols-2" style="margin-top:10px;">
-        <div class="card" style="margin:0;">
-          <h3>Activity</h3>
-          ${activityHeatmap()}
-        </div>
-        <div class="card" style="margin:0;">
-          <h3>Personal Bests</h3>
-          ${recordsScroller()}
-        </div>
-      </div>
-      <div class="card" style="margin-top:10px;">
-        <h3>Recent matches</h3>
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th style="width:72px;">Result</th><th>Date</th><th>Match</th><th>Position</th><th>Stats</th><th>Competition</th></tr></thead>
-            <tbody>
-              ${recent.length ? recent.map((m) => `
-                <tr>
-                  <td style="width:72px;">${resultTag(m.result)}</td>
-                  <td>${fmtDateTime(m.datetime)}</td>
-                  <td><a href="match.html?id=${esc(m.match_id)}">${esc(m.home_team_name)} ${esc(m.home_score)} - ${esc(m.away_score)} ${esc(m.away_team_name)}</a></td>
-                  <td>${esc(m.position || 'N/A')}</td>
-                  <td>${esc(statSummary(m))}</td>
-                  <td>${esc(competitionLabel(m))}</td>
-                </tr>
-              `).join('') : '<tr><td colspan="6">No matches</td></tr>'}
-            </tbody>
-          </table>
-        </div>
+        </section>
+
+        <section class="v2-grid two">
+          <article class="v2-card tier-b">
+            <div class="v2-section-head"><div><span class="v2-kicker">FIFA Attribute Card</span><h3>Core Profile</h3></div></div>
+            ${v2AttributeList(data.attributes || {})}
+          </article>
+          <article class="v2-card tier-b">
+            <div class="v2-section-head"><div><span class="v2-kicker">Last 10</span><h3>Form Trend</h3></div></div>
+            ${v2Trend(data.form_trend || [])}
+          </article>
+        </section>
+
+        <section class="v2-grid three">
+          <article class="v2-card tier-c">
+            <div class="v2-section-head"><div><span class="v2-kicker">Heat</span><h3>Streaks</h3></div></div>
+            <div class="v2-mini-card-list">
+              ${(data.streaks || []).length ? data.streaks.map((s) => `<div class="v2-mini-card"><span class="v2-label">${esc(s.label)}</span><strong>${esc(s.value)} ${esc(s.unit || '')}</strong></div>`).join('') : '<div class="meta">No active streak yet.</div>'}
+            </div>
+          </article>
+          <article class="v2-card tier-c">
+            <div class="v2-section-head"><div><span class="v2-kicker">Rival Victim</span><h3>Favorite Opponent</h3></div></div>
+            ${data.rival_victim ? `<div class="v2-mini-card"><span class="v2-label">${esc(data.rival_victim.team_name)}</span><strong>${esc(data.rival_victim.goals)} goals</strong><div class="v2-subtitle">${esc(data.rival_victim.assists)} assists in ${esc(data.rival_victim.matches)} matches</div></div>` : '<div class="meta">No opponent trend yet.</div>'}
+          </article>
+          <article class="v2-card tier-c">
+            <div class="v2-section-head"><div><span class="v2-kicker">Cabinet</span><h3>Honors</h3></div></div>
+            ${v2Honors(honors)}
+          </article>
+        </section>
+
+        <section class="v2-card tier-b">
+          <div class="v2-section-head"><div><span class="v2-kicker">Recent Match Cards</span><h3>Match Log</h3></div></div>
+          ${v2RecentMatchCards(recent)}
+        </section>
+
+        <section class="v2-grid three">
+          <article class="v2-card tier-c">
+            <div class="v2-section-head"><div><span class="v2-kicker">Activity</span><h3>365-Day Heat</h3></div></div>
+            ${activityHeatmap()}
+          </article>
+          <article class="v2-card tier-c">
+            <div class="v2-section-head"><div><span class="v2-kicker">Personal Records</span><h3>Bests</h3></div></div>
+            ${recordsScroller()}
+          </article>
+          <article class="v2-card tier-c">
+            <div class="v2-section-head"><div><span class="v2-kicker">Career</span><h3>Timeline</h3></div></div>
+            ${v2Timeline(careerEvents)}
+          </article>
+        </section>
       </div>
     `;
 

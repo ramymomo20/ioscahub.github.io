@@ -54,14 +54,14 @@
 
   function ttlForPath(path) {
     if (path === '/health') return 0;
-    if (path === '/servers') return 30000;
-    if (path === '/summary') return 60000;
-    if (path === '/matches' || path === '/match') return 180000;
+    if (path === '/servers') return 300000;
+    if (path === '/summary') return 120000;
+    if (path === '/matches' || path === '/match') return 600000;
     if (path === '/discord') return 300000;
-    if (path === '/players' || path === '/player') return 300000;
-    if (path === '/teams' || path === '/team' || path === '/team-h2h') return 300000;
-    if (path === '/rankings' || path === '/tournaments') return 300000;
-    return 120000;
+    if (path === '/players' || path === '/player' || path === '/hall-of-fame') return 900000;
+    if (path === '/teams' || path === '/team' || path === '/team-h2h') return 900000;
+    if (path === '/rankings' || path === '/tournaments') return 900000;
+    return 300000;
   }
 
   async function fetchJson(url, ttlMs, fetchOptions) {
@@ -165,7 +165,7 @@
 
   async function staticRequest(fileName) {
     const url = staticUrl(fileName);
-    return fetchJson(url, 600000, {
+    return fetchJson(url, 3600000, {
       cache: 'force-cache',
       headers: { 'Accept': 'application/json' }
     });
@@ -175,6 +175,7 @@
     health: () => request('/health'),
     summary: () => request('/summary'),
     rankings: (limit) => request('/rankings', { limit }),
+    hallOfFame: (limit) => request('/hall-of-fame', { limit }),
     players: (params) => request('/players', typeof params === 'object' ? params : { limit: params }),
     player: (steamId) => request('/player', { steam_id: steamId }),
     matches: (params) => request('/matches', typeof params === 'object' ? params : { limit: params }),
@@ -190,6 +191,7 @@
 
   window.HubStatic = {
     home: () => staticRequest('home.json'),
+    hallOfFame: () => staticRequest('hall-of-fame.json'),
     rankings: () => staticRequest('rankings.json'),
     players: () => staticRequest('players.json'),
     matches: () => staticRequest('matches.json'),

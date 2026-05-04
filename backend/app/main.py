@@ -2,12 +2,10 @@
 
 import asyncio
 import json
-import math
 import re
 import time
 import xml.etree.ElementTree as ET
 from collections import defaultdict
-from decimal import Decimal
 from datetime import datetime, timezone
 from typing import Any
 
@@ -25,11 +23,81 @@ except Exception:
 try:
     from .config import settings
     from .db import db
+    from .hub_shared import (
+        _asset_emoji_url,
+        _build_team_event_items,
+        _build_team_event_items_from_summary,
+        _default_discord_avatar,
+        _discord_avatar_url,
+        _event_items_signature,
+        _extract_lineup_identity_sets,
+        _extract_summary_identity_sets,
+        _infer_side_from_lineup,
+        _infer_side_from_player_match_row,
+        _json_safe,
+        _match_result_for_side,
+        _merge_event_maps,
+        _merge_match_player_rows,
+        _norm_text_key,
+        _normalize_mvp_stats,
+        _normalize_tournament_league_key,
+        _parse_event_map,
+        _parse_json,
+        _pick_emoji_for_role_asset,
+        _pick_position_asset,
+        _player_event_minutes,
+        _position_search_tokens,
+        _record_to_dict,
+        _records_to_dicts,
+        _safe_int,
+        _safe_minutes,
+        _steam_aliases,
+        _steam_avatar_proxy_url,
+        _steam_profile_url,
+        _steam_to_steam64,
+        _to_iso,
+        _tournament_league_label,
+    )
 except ImportError:
     # Allow running this module directly (python main.py) in environments
     # where package-relative imports are not available.
     from config import settings  # type: ignore
     from db import db  # type: ignore
+    from hub_shared import (  # type: ignore
+        _asset_emoji_url,
+        _build_team_event_items,
+        _build_team_event_items_from_summary,
+        _default_discord_avatar,
+        _discord_avatar_url,
+        _event_items_signature,
+        _extract_lineup_identity_sets,
+        _extract_summary_identity_sets,
+        _infer_side_from_lineup,
+        _infer_side_from_player_match_row,
+        _json_safe,
+        _match_result_for_side,
+        _merge_event_maps,
+        _merge_match_player_rows,
+        _norm_text_key,
+        _normalize_mvp_stats,
+        _normalize_tournament_league_key,
+        _parse_event_map,
+        _parse_json,
+        _pick_emoji_for_role_asset,
+        _pick_position_asset,
+        _player_event_minutes,
+        _position_search_tokens,
+        _record_to_dict,
+        _records_to_dicts,
+        _safe_int,
+        _safe_minutes,
+        _steam_aliases,
+        _steam_avatar_proxy_url,
+        _steam_profile_url,
+        _steam_to_steam64,
+        _to_iso,
+        _tournament_league_label,
+    )
 
 try:
     from rcon.source import Client as RconClient
@@ -45,8 +113,6 @@ except Exception:
     a2s = None
     A2S_AVAILABLE = False
 
-JS_MAX_SAFE_INTEGER = 9007199254740991
-STEAM_ID64_BASE = 76561197960265728
 STEAM_PROFILE_CACHE_TTL_SECONDS = 1800
 _steam_profile_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 DISCORD_MEMBER_ROLE_CACHE_TTL_SECONDS = 300
@@ -55,52 +121,7 @@ _discord_member_role_cache: dict[str, tuple[float, list[str]]] = {}
 _discord_guild_roles_cache: dict[str, tuple[float, dict[str, str]]] = {}
 
 
-def _to_iso(value: Any) -> Any:
-    if isinstance(value, datetime):
-        if value.tzinfo is None:
-            value = value.replace(tzinfo=timezone.utc)
-        return value.isoformat()
-    if isinstance(value, Decimal):
-        if value.is_nan():
-            return None
-        return float(value)
-    if isinstance(value, float) and math.isnan(value):
-        return None
-    if isinstance(value, int) and abs(value) > JS_MAX_SAFE_INTEGER:
-        return str(value)
-    if isinstance(value, str) and value.strip().lower() == "nan":
-        return None
-    return value
-
-
-def _json_safe(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {key: _json_safe(val) for key, val in value.items()}
-    if isinstance(value, list):
-        return [_json_safe(item) for item in value]
-    return _to_iso(value)
-
-
-def _record_to_dict(row: Any) -> dict[str, Any]:
-    if row is None:
-        return {}
-    payload = dict(row)
-    for key, value in list(payload.items()):
-        payload[key] = _json_safe(value)
-    return payload
-
-
-def _normalize_tournament_league_key(value: Any) -> str:
-    raw = str(value or "").strip().upper()
-    if raw in ("B", "2"):
-        return "B"
-    return "A"
-
-
-def _tournament_league_label(value: Any) -> str:
-    return f"League {_normalize_tournament_league_key(value)}"
-
-
+# Schema compatibility helpers
 async def _ensure_tournament_league_schema(conn: Any) -> None:
     await conn.execute(
         """
@@ -142,145 +163,6 @@ async def _ensure_tournament_league_schema(conn: Any) -> None:
         """
     )
 
-
-def _safe_minutes(values: Any) -> list[int]:
-    if isinstance(values, (int, float, str)):
-        values = [values]
-    elif isinstance(values, (tuple, set)):
-        values = list(values)
-    if not isinstance(values, list):
-        return []
-    out: list[int] = []
-    for value in values:
-        try:
-            minute = int(float(value))
-        except Exception:
-            continue
-        if minute > 0:
-            out.append(minute)
-    return sorted(set(out))
-
-
-def _safe_int(value: Any) -> int:
-    try:
-        return int(float(value))
-    except Exception:
-        return 0
-
-
-def _normalize_mvp_stats(value: Any) -> list[str]:
-    parsed = value
-    if isinstance(parsed, str):
-        raw = parsed.strip()
-        if not raw:
-            return []
-        try:
-            parsed = json.loads(raw)
-        except Exception:
-            return [raw]
-    if isinstance(parsed, list):
-        out: list[str] = []
-        for item in parsed:
-            text = str(item or "").strip()
-            if text:
-                out.append(text)
-        return out
-    text = str(parsed or "").strip()
-    return [text] if text else []
-
-
-def _parse_event_map(raw: Any) -> dict[str, list[int]]:
-    if isinstance(raw, str):
-        try:
-            raw = json.loads(raw)
-        except Exception:
-            raw = {}
-    if not isinstance(raw, dict):
-        return {}
-    parsed: dict[str, list[int]] = {}
-    for key, value in raw.items():
-        key_norm = str(key or "").strip()
-        if not key_norm:
-            continue
-        minutes = _safe_minutes(value)
-        if minutes:
-            parsed[key_norm] = minutes
-    return parsed
-
-
-def _merge_event_maps(left: Any, right: Any) -> dict[str, list[int]]:
-    out = _parse_event_map(left)
-    incoming = _parse_event_map(right)
-    for key, vals in incoming.items():
-        out[key] = sorted(set(out.get(key, []) + vals))
-    return out
-
-
-def _merge_match_player_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    merged: dict[tuple[str, str], dict[str, Any]] = {}
-    numeric_fields = [
-        "goals",
-        "assists",
-        "second_assists",
-        "keeper_saves",
-        "tackles",
-        "interceptions",
-        "chances_created",
-        "key_passes",
-        "yellow_cards",
-        "red_cards",
-        "own_goals",
-        "shots",
-        "shots_on_goal",
-        "passes_completed",
-        "passes_attempted",
-        "distance_covered",
-        "goals_conceded",
-    ]
-
-    for row in rows:
-        steam_key = str(row.get("steam_id") or "").strip().lower()
-        guild_key = str(row.get("guild_id") or "").strip().lower()
-        key = (steam_key, guild_key)
-
-        current = merged.get(key)
-        if not current:
-            item = dict(row)
-            item["event_timestamps"] = _parse_event_map(item.get("event_timestamps"))
-            item["mvp_key_stats"] = _normalize_mvp_stats(item.get("mvp_key_stats"))
-            merged[key] = item
-            continue
-
-        for field in numeric_fields:
-            current[field] = _safe_int(current.get(field)) + _safe_int(row.get(field))
-
-        # Keep the best persisted rating and MVP metadata when duplicates collapse.
-        cur_rating = current.get("match_rating")
-        row_rating = row.get("match_rating")
-        if isinstance(row_rating, (int, float)) and (
-            not isinstance(cur_rating, (int, float)) or float(row_rating) > float(cur_rating)
-        ):
-            current["match_rating"] = float(row_rating)
-        if bool(row.get("is_match_mvp")):
-            current["is_match_mvp"] = True
-            if row.get("mvp_score") is not None:
-                current["mvp_score"] = row.get("mvp_score")
-            if row.get("mvp_key_stats") is not None:
-                current["mvp_key_stats"] = _normalize_mvp_stats(row.get("mvp_key_stats"))
-
-        if not current.get("player_name") and row.get("player_name"):
-            current["player_name"] = row.get("player_name")
-        if not current.get("position") and row.get("position"):
-            current["position"] = row.get("position")
-
-        current["event_timestamps"] = _merge_event_maps(
-            current.get("event_timestamps"),
-            row.get("event_timestamps"),
-        )
-
-    return list(merged.values())
-
-
 def _attach_match_ratings(players: list[dict[str, Any]]) -> None:
     if not shared_rate_player:
         return
@@ -296,145 +178,7 @@ def _attach_match_ratings(players: list[dict[str, Any]]) -> None:
         player["match_rating"] = round(float(rating), 2) if isinstance(rating, (int, float)) else None
 
 
-def _player_event_minutes(player_row: dict[str, Any], keys: list[str]) -> list[int]:
-    raw = player_row.get("event_timestamps") or {}
-    if isinstance(raw, str):
-        try:
-            raw = json.loads(raw)
-        except Exception:
-            raw = {}
-    if not isinstance(raw, dict):
-        return []
-    normalized_raw: dict[str, Any] = {}
-    for raw_key, raw_val in raw.items():
-        norm_key = re.sub(r"[^a-z0-9]+", "", str(raw_key or "").lower())
-        if norm_key:
-            normalized_raw[norm_key] = raw_val
-
-    for key in keys:
-        mins = _safe_minutes(raw.get(key))
-        if mins:
-            return mins
-        norm_key = re.sub(r"[^a-z0-9]+", "", str(key or "").lower())
-        mins = _safe_minutes(normalized_raw.get(norm_key))
-        if mins:
-            return mins
-    return []
-
-
-def _norm_text_key(value: Any) -> str:
-    return re.sub(r"[^a-z0-9]+", "", str(value or "").lower())
-
-
-def _position_search_tokens(position: Any) -> list[str]:
-    pos = str(position or "").strip().upper()
-    if not pos:
-        return []
-    tokens: set[str] = {pos.lower()}
-    if pos == "GK":
-        tokens.update({"gk", "goalkeeper", "keeper", "portero"})
-    elif pos in {"LB", "RB", "CB", "SW", "LWB", "RWB", "DEF"}:
-        tokens.update({"def", "defender", "defensa", "back"})
-    elif pos in {"LM", "RM", "CM", "CDM", "CAM", "MID"}:
-        tokens.update({"mid", "midfielder", "medio", "cm", "cam", "cdm"})
-    elif pos in {"LW", "RW", "CF", "ST", "ATT"}:
-        tokens.update({"att", "forward", "striker", "wing", "attacker", "delantero"})
-    return sorted(tokens)
-
-
-def _pick_position_asset(
-    assets: list[dict[str, Any]],
-    position: Any,
-) -> dict[str, Any] | None:
-    tokens = _position_search_tokens(position)
-    if not assets or not tokens:
-        return None
-
-    best_asset: dict[str, Any] | None = None
-    best_score = -1
-
-    for asset in assets:
-        key = str(asset.get("asset_key") or "").lower()
-        name = str(asset.get("asset_name") or "").lower()
-        blob = f"{key} {name}"
-        score = 0
-        for token in tokens:
-            if token == key:
-                score += 6
-            if f"{token}_" in key or f"_{token}" in key:
-                score += 4
-            if token in key:
-                score += 3
-            if token in name:
-                score += 2
-            if token in blob:
-                score += 1
-
-        if score > best_score:
-            best_score = score
-            best_asset = asset
-
-    return best_asset if best_score > 0 else None
-
-
-def _asset_emoji_url(asset: dict[str, Any] | None) -> str | None:
-    if not asset:
-        return None
-    raw_discord_id = str(asset.get("discord_id") or "").strip()
-    if not raw_discord_id.isdigit():
-        return None
-    return f"https://cdn.discordapp.com/emojis/{raw_discord_id}.png?size=64&quality=lossless"
-
-
-def _asset_key_base(asset_key: Any) -> str:
-    key = str(asset_key or "").strip().lower()
-    if not key:
-        return ""
-    key = re.sub(r"[^a-z0-9_]+", "", key)
-    for suffix in ("_role", "_emoji", "role", "emoji"):
-        if key.endswith(suffix):
-            key = key[: -len(suffix)]
-            break
-    return key.strip("_")
-
-
-def _pick_emoji_for_role_asset(
-    role_asset: dict[str, Any] | None,
-    emoji_assets: list[dict[str, Any]],
-) -> dict[str, Any] | None:
-    if not role_asset or not emoji_assets:
-        return None
-
-    role_key = str(role_asset.get("asset_key") or "").strip().lower()
-    role_base = _asset_key_base(role_key)
-    role_name = str(role_asset.get("asset_name") or "").strip().lower()
-
-    best: dict[str, Any] | None = None
-    best_score = -1
-    for emoji in emoji_assets:
-        ekey = str(emoji.get("asset_key") or "").strip().lower()
-        ebase = _asset_key_base(ekey)
-        ename = str(emoji.get("asset_name") or "").strip().lower()
-        score = 0
-
-        if role_key and role_key.replace("_role", "_emoji") == ekey:
-            score += 10
-        if role_base and ebase and role_base == ebase:
-            score += 8
-        if role_base and ekey.startswith(role_base):
-            score += 4
-        if role_base and role_base in ekey:
-            score += 3
-        if role_name and role_name in ename:
-            score += 2
-
-        if score > best_score:
-            best_score = score
-            best = emoji
-
-    return best if best_score > 0 else None
-
-
+# Discord and Steam enrichment
 def _fetch_discord_member_roles_sync(
     bot_token: str,
     guild_id: Any,
@@ -518,320 +262,6 @@ async def _get_discord_guild_role_map(guild_id: Any) -> dict[str, str]:
     return role_map
 
 
-def _steam_aliases(steam_id: Any) -> set[str]:
-    raw = str(steam_id or "").strip()
-    if not raw:
-        return set()
-    aliases = {raw.lower()}
-    steam64 = _steam_to_steam64(raw)
-    if steam64:
-        aliases.add(str(steam64))
-    return aliases
-
-
-def _extract_lineup_identity_sets(lineup_data: Any) -> dict[str, set[str]]:
-    steam_keys: set[str] = set()
-    name_keys: set[str] = set()
-
-    if not isinstance(lineup_data, list):
-        return {"steam": steam_keys, "name": name_keys}
-
-    for item in lineup_data:
-        player_name = ""
-        steam_id = ""
-
-        if isinstance(item, list) and len(item) >= 3:
-            player_name = str(item[1] or item[2] or "").strip()
-            steam_id = str(item[2] or "").strip()
-        elif isinstance(item, dict):
-            player_name = str(
-                item.get("name")
-                or item.get("player_name")
-                or item.get("discord_name")
-                or item.get("player")
-                or item.get("steam_id")
-                or ""
-            ).strip()
-            steam_id = str(item.get("steam_id") or item.get("steamId") or "").strip()
-
-        for alias in _steam_aliases(steam_id):
-            steam_keys.add(alias)
-
-        name_key = _norm_text_key(player_name)
-        if name_key:
-            name_keys.add(name_key)
-
-    return {"steam": steam_keys, "name": name_keys}
-
-
-def _extract_summary_identity_sets(summary_rows: Any) -> dict[str, set[str]]:
-    steam_keys: set[str] = set()
-    name_keys: set[str] = set()
-    if not isinstance(summary_rows, list):
-        return {"steam": steam_keys, "name": name_keys}
-
-    for row in summary_rows:
-        if not isinstance(row, dict):
-            continue
-        steam_id = str(row.get("steam_id") or "").strip()
-        name = str(row.get("name") or row.get("player_name") or "").strip()
-        for alias in _steam_aliases(steam_id):
-            steam_keys.add(alias)
-        name_key = _norm_text_key(name)
-        if name_key:
-            name_keys.add(name_key)
-
-    return {"steam": steam_keys, "name": name_keys}
-
-
-def _infer_side_from_lineup(
-    player_row: dict[str, Any],
-    home_keys: dict[str, set[str]],
-    away_keys: dict[str, set[str]],
-) -> str:
-    aliases = _steam_aliases(player_row.get("steam_id"))
-    player_name_key = _norm_text_key(player_row.get("player_name") or player_row.get("steam_id"))
-
-    if (aliases and aliases.intersection(home_keys["steam"])) or (player_name_key and player_name_key in home_keys["name"]):
-        return "home"
-    if (aliases and aliases.intersection(away_keys["steam"])) or (player_name_key and player_name_key in away_keys["name"]):
-        return "away"
-    return "neutral"
-
-
-def _match_result_for_side(side: str, home_score: Any, away_score: Any) -> str | None:
-    home = _safe_int(home_score)
-    away = _safe_int(away_score)
-    if home == away:
-        return "D"
-    if side == "home":
-        return "W" if home > away else "L"
-    if side == "away":
-        return "W" if away > home else "L"
-    return None
-
-
-def _infer_side_from_player_match_row(match_row: dict[str, Any]) -> str:
-    home_lineup_keys = _extract_lineup_identity_sets(_parse_json(match_row.get("home_lineup"), []))
-    away_lineup_keys = _extract_lineup_identity_sets(_parse_json(match_row.get("away_lineup"), []))
-    home_summary_keys = _extract_summary_identity_sets(_parse_json(match_row.get("match_summary_home"), []))
-    away_summary_keys = _extract_summary_identity_sets(_parse_json(match_row.get("match_summary_away"), []))
-
-    home_identity_keys = {
-        "steam": set(home_lineup_keys["steam"]).union(home_summary_keys["steam"]),
-        "name": set(home_lineup_keys["name"]).union(home_summary_keys["name"]),
-    }
-    away_identity_keys = {
-        "steam": set(away_lineup_keys["steam"]).union(away_summary_keys["steam"]),
-        "name": set(away_lineup_keys["name"]).union(away_summary_keys["name"]),
-    }
-
-    home_guild_key = str(match_row.get("home_guild_id") or "").strip()
-    away_guild_key = str(match_row.get("away_guild_id") or "").strip()
-    home_name_key = _norm_text_key(match_row.get("home_team_name") or "")
-    away_name_key = _norm_text_key(match_row.get("away_team_name") or "")
-    item_guild_key = str(match_row.get("guild_id") or "").strip()
-    item_team_name_key = _norm_text_key(match_row.get("guild_team_name") or "")
-
-    is_same_side_match = (
-        (home_guild_key and away_guild_key and home_guild_key == away_guild_key)
-        or (home_name_key and away_name_key and home_name_key == away_name_key)
-    )
-
-    if not is_same_side_match:
-        if item_guild_key and item_guild_key == home_guild_key:
-            return "home"
-        if item_guild_key and item_guild_key == away_guild_key:
-            return "away"
-
-    if item_team_name_key:
-        if item_team_name_key == home_name_key:
-            return "home"
-        if item_team_name_key == away_name_key:
-            return "away"
-
-    return _infer_side_from_lineup(match_row, home_identity_keys, away_identity_keys)
-
-
-def _build_team_event_items(team_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    events: list[dict[str, Any]] = []
-    for row in team_rows:
-        name = str(row.get("player_name") or row.get("steam_id") or "Unknown").strip() or "Unknown"
-
-        # Goals
-        goal_minutes = _player_event_minutes(row, ["goal", "goals"])
-        if goal_minutes:
-            events.append({"kind": "goal", "name": name, "minutes": goal_minutes, "count": len(goal_minutes), "sort_minute": goal_minutes[0]})
-        else:
-            count = int(row.get("goals") or 0)
-            if count > 0:
-                events.append({"kind": "goal", "name": name, "minutes": [], "count": count, "sort_minute": 999})
-
-        # Yellow cards
-        yellow_minutes = _player_event_minutes(row, ["yellow", "yellow_card", "yellow_cards"])
-        if yellow_minutes:
-            events.append({"kind": "yellow", "name": name, "minutes": yellow_minutes, "count": len(yellow_minutes), "sort_minute": yellow_minutes[0]})
-        else:
-            count = int(row.get("yellow_cards") or row.get("yellowCards") or 0)
-            if count > 0:
-                events.append({"kind": "yellow", "name": name, "minutes": [], "count": count, "sort_minute": 999})
-
-        # Red cards
-        red_count = int(row.get("red_cards") or row.get("redCards") or 0)
-        red_minutes = _player_event_minutes(
-            row,
-            [
-                "red",
-                "red_card",
-                "red_cards",
-                "redcard",
-                "redcards",
-                "straight_red",
-            ],
-        )
-        if red_minutes:
-            events.append({"kind": "red", "name": name, "minutes": red_minutes, "count": len(red_minutes), "sort_minute": red_minutes[0]})
-        elif red_count > 0:
-            events.append({"kind": "red", "name": name, "minutes": [], "count": red_count, "sort_minute": 999})
-
-    events.sort(key=lambda item: (int(item.get("sort_minute") or 999), str(item.get("name") or "").lower()))
-    return events[:20]
-
-
-def _build_team_event_items_from_summary(summary_rows: Any) -> list[dict[str, Any]]:
-    events: list[dict[str, Any]] = []
-    if not isinstance(summary_rows, list):
-        return events
-
-    for row in summary_rows:
-        if not isinstance(row, dict):
-            continue
-        name = str(row.get("name") or row.get("player_name") or row.get("steam_id") or "Unknown").strip() or "Unknown"
-        row_events = [
-            ("goal", row.get("goals")),
-            ("yellow", row.get("yellow_cards")),
-            ("red", row.get("red_cards")),
-            ("own_goal", row.get("own_goals")),
-        ]
-        for kind, raw_minutes in row_events:
-            minutes = _safe_minutes(raw_minutes)
-            if minutes:
-                events.append(
-                    {
-                        "kind": kind,
-                        "name": name,
-                        "minutes": minutes,
-                        "count": len(minutes),
-                        "sort_minute": minutes[0],
-                    }
-                )
-                continue
-            count = len(raw_minutes) if isinstance(raw_minutes, list) else _safe_int(raw_minutes)
-            if count > 0:
-                events.append(
-                    {
-                        "kind": kind,
-                        "name": name,
-                        "minutes": [],
-                        "count": count,
-                        "sort_minute": 999,
-                    }
-                )
-
-    events.sort(key=lambda item: (int(item.get("sort_minute") or 999), str(item.get("name") or "").lower()))
-    return events[:20]
-
-
-def _event_items_signature(events: list[dict[str, Any]]) -> tuple[tuple[Any, ...], ...]:
-    normalized: list[tuple[Any, ...]] = []
-    for item in events or []:
-        if not isinstance(item, dict):
-            continue
-        normalized.append(
-            (
-                str(item.get("kind") or ""),
-                _norm_text_key(item.get("name") or ""),
-                tuple(_safe_minutes(item.get("minutes"))),
-                _safe_int(item.get("count")),
-            )
-        )
-    return tuple(normalized)
-
-
-def _records_to_dicts(rows: list[Any]) -> list[dict[str, Any]]:
-    return [_record_to_dict(row) for row in rows]
-
-
-def _parse_json(value: Any, fallback: Any) -> Any:
-    if value is None:
-        return fallback
-    if isinstance(value, (dict, list)):
-        return value
-    if isinstance(value, str):
-        try:
-            return json.loads(value)
-        except Exception:
-            return fallback
-    return fallback
-
-
-def _default_discord_avatar(discord_id: Any) -> str:
-    try:
-        seed = int(str(discord_id)) % 5
-    except Exception:
-        seed = 0
-    return f"https://cdn.discordapp.com/embed/avatars/{seed}.png"
-
-
-def _discord_avatar_url(discord_id: Any) -> str:
-    if discord_id is None:
-        return _default_discord_avatar(discord_id)
-    raw = str(discord_id).strip()
-    if not raw:
-        return _default_discord_avatar(discord_id)
-    return f"https://unavatar.io/discord/{raw}"
-
-
-def _steam_profile_url(steam_id: str | None) -> str | None:
-    if not steam_id:
-        return None
-    steam64 = _steam_to_steam64(steam_id)
-    if steam64:
-        return f"https://steamcommunity.com/profiles/{steam64}"
-    sid = str(steam_id).strip()
-    return f"https://steamcommunity.com/search/users/#text={sid}"
-
-
-def _steam_avatar_proxy_url(steam64: Any) -> str | None:
-    raw = str(steam64 or "").strip()
-    if not raw:
-        return None
-    return f"https://unavatar.io/steam/{raw}"
-
-
-def _steam_to_steam64(steam_id: Any) -> str | None:
-    raw = str(steam_id or "").strip()
-    if not raw:
-        return None
-    if raw.isdigit() and len(raw) >= 16:
-        return raw
-
-    # STEAM_X:Y:Z -> 64-bit ID
-    match = re.match(r"^STEAM_[0-5]:([0-1]):(\d+)$", raw, flags=re.IGNORECASE)
-    if match:
-        y = int(match.group(1))
-        z = int(match.group(2))
-        return str(STEAM_ID64_BASE + (z * 2) + y)
-
-    # [U:1:Z] -> 64-bit ID
-    match = re.match(r"^\[U:1:(\d+)\]$", raw, flags=re.IGNORECASE)
-    if match:
-        account_id = int(match.group(1))
-        return str(STEAM_ID64_BASE + account_id)
-
-    return None
-
-
 def _fetch_steam_profile_xml_sync(steam64: str) -> dict[str, Any]:
     url = f"https://steamcommunity.com/profiles/{steam64}/?xml=1"
     try:
@@ -904,6 +334,29 @@ async def _enrich_players_with_steam(players: list[dict[str, Any]], *, max_items
             item["display_avatar_url"] = item.get("avatar_url")
 
 
+async def _decorate_public_players(players: list[dict[str, Any]], *, enrich_limit: int | None = None) -> None:
+    if not players:
+        return
+    for item in players:
+        if not item.get("discord_name") and item.get("player_name"):
+            item["discord_name"] = item.get("player_name")
+        if item.get("rating") is None and item.get("public_rating") is not None:
+            item["rating"] = item.get("public_rating")
+        if not item.get("position") and item.get("main_role"):
+            item["position"] = item.get("main_role")
+        item["avatar_url"] = _discord_avatar_url(item.get("discord_id"))
+        item["avatar_fallback_url"] = _default_discord_avatar(item.get("discord_id"))
+        item["steam_profile_url"] = _steam_profile_url(item.get("steam_id"))
+        steam64 = _steam_to_steam64(item.get("steam_id"))
+        if steam64:
+            item["steam_id64"] = steam64
+            item["display_avatar_url"] = _steam_avatar_proxy_url(steam64)
+        else:
+            item["display_avatar_url"] = item["avatar_url"]
+    await _enrich_players_with_steam(players, max_items=enrich_limit)
+
+
+# Server status helpers
 def _parse_address(address: str) -> tuple[str, int] | None:
     raw = str(address or "").strip()
     if ":" not in raw:
@@ -976,6 +429,7 @@ async def _get_server_status_a2s(address: str) -> dict[str, Any]:
     }
 
 
+# Realtime plumbing
 class WSManager:
     def __init__(self) -> None:
         self._sockets: set[WebSocket] = set()
@@ -1019,6 +473,7 @@ app.add_middleware(
 )
 
 
+# App lifecycle
 @app.on_event("startup")
 async def on_startup() -> None:
     await db.connect()
@@ -1027,6 +482,13 @@ async def on_startup() -> None:
 @app.on_event("shutdown")
 async def on_shutdown() -> None:
     await db.disconnect()
+
+
+# Root and API routes
+@app.get("/")
+@app.head("/")
+async def root() -> dict[str, str]:
+    return {"status": "ok", "service": settings.app_name}
 
 
 @app.get("/api/health")
@@ -1055,7 +517,168 @@ async def summary() -> dict[str, Any]:
                 (SELECT COUNT(*) FROM IOS_SERVERS WHERE is_active=TRUE) AS active_servers_total
             """
         )
-    return _record_to_dict(counts)
+        hall_of_fame_rows = []
+        rising_star_rows = []
+        hot_player_rows = []
+        hot_team_rows = []
+        try:
+            hall_of_fame_rows, rising_star_rows, hot_player_rows, hot_team_rows = await asyncio.gather(
+                conn.fetch(
+                    """
+                    SELECT
+                        steam_id,
+                        discord_id,
+                        player_name,
+                        COALESCE(main_role, 'N/A') AS position,
+                        public_rating AS rating,
+                        matches_played,
+                        motm_awards,
+                        trophy_count,
+                        award_count,
+                        prestige_score
+                    FROM hub.hall_of_fame_players
+                    ORDER BY prestige_score DESC, public_rating DESC NULLS LAST, player_name ASC
+                    LIMIT 6
+                    """
+                ),
+                conn.fetch(
+                    """
+                    SELECT
+                        steam_id,
+                        discord_id,
+                        player_name,
+                        COALESCE(main_role, 'N/A') AS position,
+                        public_rating AS rating,
+                        matches_played,
+                        recent5_goals,
+                        recent5_assists,
+                        recent7_motm,
+                        current_win_streak,
+                        rise_score
+                    FROM hub.rising_star_players
+                    ORDER BY rise_score DESC, public_rating DESC NULLS LAST, player_name ASC
+                    LIMIT 6
+                    """
+                ),
+                conn.fetch(
+                    """
+                    SELECT
+                        pfs.steam_id,
+                        ps.discord_id,
+                        ps.player_name,
+                        COALESCE(ps.main_role, 'N/A') AS position,
+                        ps.public_rating AS rating,
+                        pfs.current_win_streak,
+                        pfs.current_unbeaten_streak,
+                        pfs.recent5_goals,
+                        pfs.recent5_assists,
+                        pfs.recent7_motm,
+                        pfs.recent5_avg_rating
+                    FROM hub.player_form_summary pfs
+                    JOIN hub.player_summary ps
+                      ON ps.steam_id = pfs.steam_id
+                    WHERE COALESCE(ps.matches_played, 0) >= 3
+                      AND (
+                        COALESCE(pfs.current_win_streak, 0) > 0
+                        OR COALESCE(pfs.recent5_goals, 0) > 0
+                        OR COALESCE(pfs.recent7_motm, 0) > 0
+                      )
+                    ORDER BY
+                        COALESCE(pfs.current_win_streak, 0) DESC,
+                        COALESCE(pfs.recent7_motm, 0) DESC,
+                        COALESCE(pfs.recent5_goals, 0) DESC,
+                        COALESCE(ps.public_rating, 0) DESC,
+                        ps.player_name ASC
+                    LIMIT 6
+                    """
+                ),
+                conn.fetch(
+                    """
+                    SELECT
+                        tfs.guild_id::text AS guild_id,
+                        ts.guild_name,
+                        ts.guild_icon,
+                        ts.average_rating,
+                        ts.matches_played,
+                        ts.win_rate,
+                        tfs.current_win_streak,
+                        tfs.current_unbeaten_streak,
+                        tfs.recent5_points,
+                        tfs.recent5_results
+                    FROM hub.team_form_summary tfs
+                    JOIN hub.team_summary ts
+                      ON ts.guild_id = tfs.guild_id
+                    WHERE COALESCE(ts.matches_played, 0) >= 3
+                      AND (
+                        COALESCE(tfs.current_win_streak, 0) > 0
+                        OR COALESCE(tfs.current_unbeaten_streak, 0) > 1
+                      )
+                    ORDER BY
+                        COALESCE(tfs.current_win_streak, 0) DESC,
+                        COALESCE(tfs.recent5_points, 0) DESC,
+                        COALESCE(ts.win_rate, 0) DESC,
+                        ts.guild_name ASC
+                    LIMIT 6
+                    """
+                ),
+            )
+        except Exception:
+            hall_of_fame_rows = []
+            rising_star_rows = []
+            hot_player_rows = []
+            hot_team_rows = []
+
+    payload = _record_to_dict(counts)
+    hall_of_fame = _records_to_dicts(hall_of_fame_rows)
+    rising_stars = _records_to_dicts(rising_star_rows)
+    hot_players = _records_to_dicts(hot_player_rows)
+    hot_teams = _records_to_dicts(hot_team_rows)
+    await _decorate_public_players(hall_of_fame, enrich_limit=6)
+    await _decorate_public_players(rising_stars, enrich_limit=6)
+    await _decorate_public_players(hot_players, enrich_limit=6)
+    payload["storyboards"] = {
+        "hall_of_fame": hall_of_fame,
+        "rising_stars": rising_stars,
+        "streak_center": {
+            "players": hot_players,
+            "teams": hot_teams,
+        },
+    }
+    return payload
+
+
+@app.get("/api/hall-of-fame")
+async def hall_of_fame(limit: int = Query(default=50, ge=1, le=500)) -> dict[str, Any]:
+    try:
+        async with db.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT
+                    steam_id,
+                    discord_id,
+                    player_name,
+                    COALESCE(main_role, 'N/A') AS position,
+                    public_rating AS rating,
+                    matches_played,
+                    goals,
+                    assists,
+                    motm_awards,
+                    trophy_count,
+                    award_count,
+                    prestige_score,
+                    last_match_at
+                FROM hub.hall_of_fame_players
+                ORDER BY prestige_score DESC, public_rating DESC NULLS LAST, player_name ASC
+                LIMIT $1
+                """,
+                limit,
+            )
+    except Exception:
+        rows = []
+
+    players = _records_to_dicts(rows)
+    await _decorate_public_players(players, enrich_limit=min(limit, 150))
+    return {"players": players}
 
 
 @app.get("/api/rankings")
@@ -1098,18 +721,7 @@ async def rankings(limit: int = Query(default=200, ge=1, le=2000)) -> dict[str, 
         )
 
     players = _records_to_dicts(rows)
-    for item in players:
-        item["avatar_url"] = _discord_avatar_url(item.get("discord_id"))
-        item["avatar_fallback_url"] = _default_discord_avatar(item.get("discord_id"))
-        item["steam_profile_url"] = _steam_profile_url(item.get("steam_id"))
-        steam64 = _steam_to_steam64(item.get("steam_id"))
-        if steam64:
-            item["steam_id64"] = steam64
-            item["display_avatar_url"] = _steam_avatar_proxy_url(steam64)
-        else:
-            item["display_avatar_url"] = item["avatar_url"]
-
-    await _enrich_players_with_steam(players, max_items=300)
+    await _decorate_public_players(players, enrich_limit=300)
 
     def best_for(positions: set[str]) -> dict[str, Any] | None:
         for p in players:
@@ -1265,17 +877,7 @@ async def players(limit: int = Query(default=500, ge=1, le=5000)) -> dict[str, A
             )
 
     payload = _records_to_dicts(rows)
-    for item in payload:
-        item["avatar_url"] = _discord_avatar_url(item.get("discord_id"))
-        item["avatar_fallback_url"] = _default_discord_avatar(item.get("discord_id"))
-        item["steam_profile_url"] = _steam_profile_url(item.get("steam_id"))
-        steam64 = _steam_to_steam64(item.get("steam_id"))
-        if steam64:
-            item["steam_id64"] = steam64
-            item["display_avatar_url"] = _steam_avatar_proxy_url(steam64)
-        else:
-            item["display_avatar_url"] = item["avatar_url"]
-    await _enrich_players_with_steam(payload, max_items=500)
+    await _decorate_public_players(payload, enrich_limit=500)
     return {"players": payload}
 
 
@@ -1319,10 +921,18 @@ async def player_detail(steam_id: str) -> dict[str, Any]:
                 rp.discord_name,
                 rp.linked_steam_ids,
                 COALESCE(lp.position, 'N/A') AS position,
-                COALESCE(rp.rating, 5.0) AS rating,
+                COALESCE(rp.display_main_role_rating, rp.rating, 5.0) AS rating,
+                rp.main_role,
+                rp.atk_rating,
+                rp.mid_rating,
+                rp.def_rating,
+                rp.gk_rating,
+                rp.total_appearances,
+                rp.total_minutes,
                 rp.rating_updated_at,
                 rp.registered_at,
-                rp.last_active
+                rp.last_active,
+                rp.last_match_at
             FROM resolved_player rp
             LEFT JOIN latest_pos lp ON TRUE
             """,
@@ -1448,6 +1058,8 @@ async def player_detail(steam_id: str) -> dict[str, Any]:
                 pmd.red_cards,
                 pmd.yellow_cards,
                 pmd.pass_accuracy,
+                pmd.match_rating,
+                pmd.is_match_mvp,
                 pmd.status,
                 pmd.clutch_actions,
                 pmd.sub_impact
@@ -1524,6 +1136,9 @@ async def player_detail(steam_id: str) -> dict[str, Any]:
                 pmd.pass_accuracy,
                 pmd.passes_completed,
                 pmd.passes_attempted,
+                pmd.match_rating,
+                pmd.is_match_mvp,
+                pmd.mvp_score,
                 pmd.own_goals,
                 pmd.status,
                 pmd.clutch_actions,
@@ -1779,11 +1394,147 @@ async def player_detail(steam_id: str) -> dict[str, Any]:
         "sub_impact_own_goals": int(float(totals_payload.get("sub_impact_own_goals") or 0)),
     }
 
+    rating_values = [
+        float(item.get("match_rating"))
+        for item in match_history
+        if isinstance(item.get("match_rating"), (int, float))
+    ]
+    last10 = match_history[:10]
+    form_trend = [
+        {
+            "match_id": item.get("match_id"),
+            "date": item.get("datetime"),
+            "opponent": (
+                item.get("away_team_name")
+                if _infer_side_from_player_match_row(item) == "home"
+                else item.get("home_team_name")
+            ),
+            "result": item.get("result"),
+            "rating": item.get("match_rating"),
+            "goals": item.get("goals") or 0,
+            "assists": item.get("assists") or 0,
+        }
+        for item in reversed(last10)
+    ]
+
+    def _attribute_score(value: float, cap: float) -> int:
+        if cap <= 0:
+            return 50
+        return max(45, min(99, int(round(50 + (value / cap) * 49))))
+
+    appearances = max(1, matches_played)
+    role = str(player_payload.get("main_role") or "").upper()
+    pace_seed = (
+        float(player_payload.get("rating") or 5.0)
+        + (float(totals_payload.get("distance_covered") or 0) / max(1, appearances) / 1000.0)
+    )
+    attributes = {
+        "pace": _attribute_score(pace_seed, 12),
+        "shooting": _attribute_score(total_goals / appearances, 1.6),
+        "passing": _attribute_score((total_assists + int(totals_payload.get("key_passes") or 0)) / appearances, 3.5),
+        "defense": _attribute_score((int(totals_payload.get("interceptions") or 0) + int(totals_payload.get("tackles") or 0)) / appearances, 8),
+        "vision": _attribute_score((int(totals_payload.get("chances_created") or 0) + int(totals_payload.get("key_passes") or 0)) / appearances, 5),
+        "clutch": _attribute_score((clutch_action_events + sub_impact_events) / appearances, 1.5),
+    }
+    if role == "GK":
+        attributes["defense"] = max(attributes["defense"], _attribute_score(int(totals_payload.get("keeper_saves") or 0) / appearances, 8))
+
+    streaks: list[dict[str, Any]] = []
+    current_wins = 0
+    for item in match_history:
+        if item.get("result") == "W":
+            current_wins += 1
+        else:
+            break
+    if current_wins >= 2:
+        streaks.append({"label": "Win streak", "value": current_wins, "unit": "matches"})
+    recent5_goals = sum(_safe_int(item.get("goals")) for item in match_history[:5])
+    if recent5_goals > 0:
+        streaks.append({"label": "Goals in last 5", "value": recent5_goals, "unit": "goals"})
+    recent7_motm = sum(1 for item in match_history[:7] if item.get("is_match_mvp"))
+    if recent7_motm > 0:
+        streaks.append({"label": "MOTM in last 7", "value": recent7_motm, "unit": "awards"})
+
+    victim_map: dict[str, dict[str, Any]] = {}
+    for item in match_history:
+        side = _infer_side_from_player_match_row(item)
+        opponent = item.get("away_team_name") if side == "home" else item.get("home_team_name")
+        key = str(opponent or "Unknown")
+        bucket = victim_map.setdefault(key, {"team_name": key, "goals": 0, "assists": 0, "matches": 0})
+        bucket["goals"] += _safe_int(item.get("goals"))
+        bucket["assists"] += _safe_int(item.get("assists"))
+        bucket["matches"] += 1
+    rival_victim = None
+    if victim_map:
+        rival_victim = max(victim_map.values(), key=lambda row: (row["goals"], row["assists"], row["matches"]))
+
+    role_profiles = [
+        ("Clinical Finisher", attributes["shooting"]),
+        ("Creative Winger", max(attributes["pace"], attributes["vision"], attributes["passing"])),
+        ("Ball Winning Midfielder", max(attributes["defense"], attributes["passing"])),
+        ("Defensive Anchor", attributes["defense"]),
+        ("Clutch Specialist", attributes["clutch"]),
+    ]
+    signature_role = max(role_profiles, key=lambda item: item[1])[0]
+
+    trophies: list[dict[str, Any]] = []
+    awards: list[dict[str, Any]] = []
+    career_events: list[dict[str, Any]] = []
+    try:
+        async with db.acquire() as trophy_conn:
+            trophy_rows = await trophy_conn.fetch(
+                """
+                SELECT trophy_type, title, subtitle, awarded_at, metadata
+                FROM hub.trophies
+                WHERE owner_type = 'player'
+                  AND owner_key = ANY($1::text[])
+                ORDER BY awarded_at DESC NULLS LAST, id DESC
+                LIMIT 12
+                """,
+                steam_scope,
+            )
+            trophies = _records_to_dicts(trophy_rows)
+            award_rows = await trophy_conn.fetch(
+                """
+                SELECT award_scope, award_key, title, subtitle, period_start, period_end, metadata
+                FROM hub.awards
+                WHERE owner_type = 'player'
+                  AND owner_key = ANY($1::text[])
+                ORDER BY period_end DESC NULLS LAST, created_at DESC, id DESC
+                LIMIT 12
+                """,
+                steam_scope,
+            )
+            awards = _records_to_dicts(award_rows)
+            career_rows = await trophy_conn.fetch(
+                """
+                SELECT event_type, title, details, event_at, metadata
+                FROM hub.career_events
+                WHERE steam_id = ANY($1::text[])
+                ORDER BY event_at DESC, created_at DESC, id DESC
+                LIMIT 20
+                """,
+                steam_scope,
+            )
+            career_events = _records_to_dicts(career_rows)
+    except Exception:
+        trophies = []
+        awards = []
+        career_events = []
+
     return {
         "player": player_payload,
         "totals": totals_payload,
         "recent_matches": recent_payload,
         "summary": player_summary,
+        "attributes": attributes,
+        "form_trend": form_trend,
+        "streaks": streaks,
+        "rival_victim": rival_victim,
+        "signature_role": signature_role,
+        "trophies": trophies,
+        "awards": awards,
+        "career_events": career_events,
         "activity": {
             "daily_counts": activity_daily_counts,
             "active_days": len(activity_daily_counts),
@@ -1897,6 +1648,19 @@ async def match_detail(match_id: str) -> dict[str, Any]:
             row_id,
             row_match_id,
         )
+        try:
+            vote_rows = await conn.fetch(
+                """
+                SELECT vote_type, target_key, COUNT(*)::int AS votes
+                FROM hub.community_votes
+                WHERE match_stats_id = $1
+                GROUP BY vote_type, target_key
+                ORDER BY vote_type, votes DESC, target_key
+                """,
+                row_id,
+            )
+        except Exception:
+            vote_rows = []
 
     match_payload = _record_to_dict(row)
     match_payload["home_lineup"] = _parse_json(match_payload.get("home_lineup"), [])
@@ -2001,6 +1765,118 @@ async def match_detail(match_id: str) -> dict[str, Any]:
     home_events_payload = row_home_events if prefer_row_events and row_home_events else (summary_home_events or row_home_events)
     away_events_payload = row_away_events if prefer_row_events and row_away_events else (summary_away_events or row_away_events)
 
+    def _performer_score(player: dict[str, Any]) -> float:
+        rating = player.get("match_rating")
+        if isinstance(rating, (int, float)):
+            return float(rating)
+        return (
+            5.0
+            + _safe_int(player.get("goals")) * 1.1
+            + _safe_int(player.get("assists")) * 0.8
+            + _safe_int(player.get("keeper_saves")) * 0.22
+            + _safe_int(player.get("interceptions")) * 0.16
+            + _safe_int(player.get("tackles")) * 0.12
+        )
+
+    top_performers = []
+    for player in sorted(all_player_stats, key=_performer_score, reverse=True)[:3]:
+        top_performers.append(
+            {
+                "steam_id": player.get("steam_id"),
+                "player_name": player.get("player_name"),
+                "position": player.get("position"),
+                "guild_id": player.get("guild_id"),
+                "rating": round(_performer_score(player), 1),
+                "goals": _safe_int(player.get("goals")),
+                "assists": _safe_int(player.get("assists")),
+                "saves": _safe_int(player.get("keeper_saves")),
+                "tackles": _safe_int(player.get("tackles")),
+                "interceptions": _safe_int(player.get("interceptions")),
+            }
+        )
+
+    def _side_captain_candidate(side_rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+        if not side_rows:
+            return None
+        return sorted(side_rows, key=_performer_score, reverse=True)[0]
+
+    home_duel = _side_captain_candidate(grouped.get("home", []))
+    away_duel = _side_captain_candidate(grouped.get("away", []))
+    duel = None
+    if home_duel and away_duel:
+        duel = {
+            "home": {
+                "player_name": home_duel.get("player_name"),
+                "rating": round(_performer_score(home_duel), 1),
+                "goals": _safe_int(home_duel.get("goals")),
+                "passes": _safe_int(home_duel.get("passes_completed")),
+                "tackles": _safe_int(home_duel.get("tackles")) + _safe_int(home_duel.get("interceptions")),
+            },
+            "away": {
+                "player_name": away_duel.get("player_name"),
+                "rating": round(_performer_score(away_duel), 1),
+                "goals": _safe_int(away_duel.get("goals")),
+                "passes": _safe_int(away_duel.get("passes_completed")),
+                "tackles": _safe_int(away_duel.get("tackles")) + _safe_int(away_duel.get("interceptions")),
+            },
+        }
+
+    timeline_items = []
+    for side, events in (("home", home_events_payload), ("away", away_events_payload)):
+        for event in events or []:
+            kind = str(event.get("kind") or event.get("type") or "").lower()
+            if kind not in {"goal", "own_goal", "red", "yellow"}:
+                continue
+            minutes = event.get("minutes") if isinstance(event.get("minutes"), list) else [event.get("minute")]
+            for minute in minutes:
+                minute_int = _safe_int(minute)
+                timeline_items.append(
+                    {
+                        "side": side,
+                        "kind": kind,
+                        "minute": minute_int if minute_int > 0 else None,
+                        "player_name": event.get("name") or event.get("player_name"),
+                    }
+                )
+    timeline_items.sort(key=lambda item: item.get("minute") or 999)
+
+    turning_point = None
+    red_event = next((item for item in timeline_items if item["kind"] == "red"), None)
+    late_goal = next((item for item in reversed(timeline_items) if item["kind"] in {"goal", "own_goal"} and (item.get("minute") or 0) >= 70), None)
+    if red_event:
+        turning_point = f"Red card at {red_event.get('minute') or '?'}' changed the match rhythm."
+    elif bool(match_payload.get("comeback_flag")):
+        turning_point = "The winner had to recover from behind."
+    elif late_goal:
+        turning_point = f"Late goal at {late_goal.get('minute')}' decided the closing stretch."
+    else:
+        turning_point = "Control came from the stronger all-around performer group."
+
+    home_score = _safe_int(match_payload.get("home_score"))
+    away_score = _safe_int(match_payload.get("away_score"))
+    records_triggered = []
+    if home_score + away_score >= 8:
+        records_triggered.append("High-scoring match")
+    if abs(home_score - away_score) >= 5:
+        records_triggered.append("Statement win")
+    if bool(match_payload.get("comeback_flag")):
+        records_triggered.append("Comeback result")
+
+    momentum = [
+        {"label": "Opening", "home": len([e for e in timeline_items if e["side"] == "home" and (e.get("minute") or 0) <= 30]), "away": len([e for e in timeline_items if e["side"] == "away" and (e.get("minute") or 0) <= 30])},
+        {"label": "Middle", "home": len([e for e in timeline_items if e["side"] == "home" and 31 <= (e.get("minute") or 0) <= 65]), "away": len([e for e in timeline_items if e["side"] == "away" and 31 <= (e.get("minute") or 0) <= 65])},
+        {"label": "Closing", "home": len([e for e in timeline_items if e["side"] == "home" and (e.get("minute") or 0) >= 66]), "away": len([e for e in timeline_items if e["side"] == "away" and (e.get("minute") or 0) >= 66])},
+    ]
+    community_votes: dict[str, list[dict[str, Any]]] = {}
+    for vote in _records_to_dicts(vote_rows):
+        vote_type = str(vote.get("vote_type") or "vote")
+        community_votes.setdefault(vote_type, []).append(
+            {
+                "target_key": vote.get("target_key"),
+                "votes": _safe_int(vote.get("votes")),
+            }
+        )
+
     return {
         "match": match_payload,
         "player_stats": {
@@ -2012,6 +1888,15 @@ async def match_detail(match_id: str) -> dict[str, Any]:
         "team_events": {
             "home": home_events_payload,
             "away": away_events_payload,
+        },
+        "story": {
+            "top_performers": top_performers,
+            "duel": duel,
+            "timeline": timeline_items,
+            "turning_point": turning_point,
+            "records_triggered": records_triggered,
+            "momentum": momentum,
+            "community_votes": community_votes,
         },
     }
 
@@ -2359,7 +2244,13 @@ async def tournament_detail(tournament_id: int) -> dict[str, Any]:
             *,
             fallback_expr: str | None = None,
             extra_where: str = "",
+            league_key: str | None = None,
         ) -> list[dict[str, Any]]:
+            query_params: list[Any] = [tournament_id]
+            league_filter = ""
+            if league_key:
+                query_params.append(_normalize_tournament_league_key(league_key))
+                league_filter = f"AND COALESCE(fx.league_key, 'A') = ${len(query_params)}"
             rows = await conn.fetch(
                 f"""
                 SELECT
@@ -2380,17 +2271,18 @@ async def tournament_detail(tournament_id: int) -> dict[str, Any]:
                   AND fx.played_match_stats_id IS NOT NULL
                   AND COALESCE(fx.is_forfeit_home, FALSE) = FALSE
                   AND COALESCE(fx.is_forfeit_away, FALSE) = FALSE
+                {league_filter}
                 {extra_where}
                 GROUP BY pmd.steam_id
                 ORDER BY total DESC, player_name ASC
                 LIMIT 30
                 """,
-                tournament_id,
+                *query_params,
             )
             payload = _records_to_dicts(rows)
             payload = [row for row in payload if _safe_int(row.get("total")) > 0]
 
-            if not payload and fallback_expr:
+            if not payload and fallback_expr and not league_key:
                 fallback_rows = await conn.fetch(
                     f"""
                     SELECT
@@ -2414,6 +2306,16 @@ async def tournament_detail(tournament_id: int) -> dict[str, Any]:
                 row["display_name"] = _leader_display_name(row)
             return payload[:10]
 
+        def _leaders_bundle_for_league(league_key: str | None = None) -> dict[str, list[dict[str, Any]]]:
+            return {
+                "goals": [],
+                "assists": [],
+                "passes": [],
+                "defenders": [],
+                "goalkeepers": [],
+                "mvps": [],
+            }
+
         leader_goals = await _fetch_leader_metric(
             "COALESCE(pmd.goals, 0)",
             fallback_expr="COALESCE(goals, 0)",
@@ -2435,11 +2337,13 @@ async def tournament_detail(tournament_id: int) -> dict[str, Any]:
         )
 
         mvp_leaders: list[dict[str, Any]] = []
+        league_mvp_counts: dict[str, dict[str, dict[str, Any]]] = defaultdict(dict)
         if shared_get_mvp_data:
             match_rows = await conn.fetch(
                 """
                 SELECT
                     fx.played_match_stats_id AS match_stats_id,
+                    COALESCE(fx.league_key, 'A') AS league_key,
                     pmd.steam_id,
                     pmd.guild_id,
                     COALESCE(NULLIF(ip.discord_name, ''), pmd.steam_id) AS player_name,
@@ -2529,6 +2433,17 @@ async def tournament_detail(tournament_id: int) -> dict[str, Any]:
                     }
                 mvp_counts[key]["total"] = _safe_int(mvp_counts[key].get("total")) + 1
 
+                league_bucket = league_mvp_counts[_normalize_tournament_league_key(linked.get("league_key"))]
+                if key not in league_bucket:
+                    league_bucket[key] = {
+                        "steam_id": steam_id,
+                        "discord_id": linked.get("discord_id"),
+                        "discord_name": linked.get("discord_name"),
+                        "player_name": linked.get("player_name"),
+                        "total": 0,
+                    }
+                league_bucket[key]["total"] = _safe_int(league_bucket[key].get("total")) + 1
+
             mvp_leaders = list(mvp_counts.values())
             mvp_leaders.sort(
                 key=lambda row: (
@@ -2548,6 +2463,46 @@ async def tournament_detail(tournament_id: int) -> dict[str, Any]:
             "goalkeepers": leader_goalkeepers,
             "mvps": mvp_leaders,
         }
+
+        league_leaders_payload: dict[str, dict[str, list[dict[str, Any]]]] = {}
+        active_league_keys = sorted({
+            _normalize_tournament_league_key(row.get("league_key"))
+            for row in list(standings) + list(fixtures) + list(teams)
+        } or {"A"})
+        for league_key in active_league_keys:
+            league_bundle = _leaders_bundle_for_league(league_key)
+            league_bundle["goals"] = await _fetch_leader_metric(
+                "COALESCE(pmd.goals, 0)",
+                league_key=league_key,
+            )
+            league_bundle["assists"] = await _fetch_leader_metric(
+                "COALESCE(pmd.assists, 0) + COALESCE(pmd.second_assists, 0)",
+                league_key=league_key,
+            )
+            league_bundle["passes"] = await _fetch_leader_metric(
+                "COALESCE(pmd.passes_completed, 0)",
+                league_key=league_key,
+            )
+            league_bundle["defenders"] = await _fetch_leader_metric(
+                "COALESCE(pmd.tackles, 0) + COALESCE(pmd.interceptions, 0)",
+                league_key=league_key,
+            )
+            league_bundle["goalkeepers"] = await _fetch_leader_metric(
+                "COALESCE(pmd.keeper_saves, 0) + COALESCE(pmd.keeper_saves_caught, 0)",
+                extra_where="AND UPPER(COALESCE(pmd.position, '')) = 'GK'",
+                league_key=league_key,
+            )
+            league_mvps = list(league_mvp_counts.get(league_key, {}).values())
+            league_mvps.sort(
+                key=lambda row: (
+                    -_safe_int(row.get("total")),
+                    str(_leader_display_name(row)).lower(),
+                )
+            )
+            for row in league_mvps:
+                row["display_name"] = _leader_display_name(row)
+            league_bundle["mvps"] = league_mvps[:10]
+            league_leaders_payload[league_key] = league_bundle
 
         orphan_rows = await conn.fetch(
             """
@@ -2649,14 +2604,22 @@ async def tournament_detail(tournament_id: int) -> dict[str, Any]:
     tournament_payload["league_count"] = int(tournament_payload.get("league_count") or 1)
 
     leagues_map: dict[str, dict[str, Any]] = {}
-    for league_key in ["A", "B"]:
+    for league_key in active_league_keys:
         leagues_map[league_key] = {
             "league_key": league_key,
             "league_name": _tournament_league_label(league_key),
-            "standings": [],
-            "fixtures": [],
-            "teams": [],
-        }
+                "standings": [],
+                "fixtures": [],
+                "teams": [],
+                "leaders": league_leaders_payload.get(league_key, {
+                    "goals": [],
+                    "assists": [],
+                    "passes": [],
+                    "defenders": [],
+                    "goalkeepers": [],
+                    "mvps": [],
+                }),
+            }
     for row in standings_payload:
         leagues_map[_normalize_tournament_league_key(row.get("league_key"))]["standings"].append(row)
     for row in fixtures_payload:
@@ -2665,7 +2628,7 @@ async def tournament_detail(tournament_id: int) -> dict[str, Any]:
         leagues_map[_normalize_tournament_league_key(row.get("league_key"))]["teams"].append(row)
     leagues_payload = [
         leagues_map[key]
-        for key in ["A", "B"]
+        for key in active_league_keys
         if leagues_map[key]["standings"] or leagues_map[key]["fixtures"] or leagues_map[key]["teams"] or key == "A"
     ]
 
@@ -2677,6 +2640,7 @@ async def tournament_detail(tournament_id: int) -> dict[str, Any]:
         "leagues": leagues_payload,
         "team_forms": trimmed_team_forms,
         "leaders": leaders_payload,
+        "league_leaders": league_leaders_payload,
     }
 
 
@@ -3217,16 +3181,151 @@ async def team_detail(guild_id: str) -> dict[str, Any]:
     goals_against = int(stats_payload.get("goals_against") or 0)
     team_summary = {
         "form_last5": form_last5,
+        "form_last20": [
+            str(match.get("result") or "").strip().upper()
+            for match in recent_payload
+            if str(match.get("result") or "").strip().upper() in {"W", "D", "L"}
+        ][:20],
         "win_rate": round((wins / matches_played) * 100, 1) if matches_played > 0 else 0.0,
         "avg_goals_for": round((goals_for / matches_played), 2) if matches_played > 0 else 0.0,
         "avg_goals_against": round((goals_against / matches_played), 2) if matches_played > 0 else 0.0,
     }
+
+    top_players = sorted(
+        parsed_players,
+        key=lambda item: float(item.get("rating") or 0),
+        reverse=True,
+    )[:5]
+
+    buckets = {
+        "defense": [],
+        "midfield": [],
+        "attack": [],
+        "goalkeeping": [],
+    }
+    for player_item in parsed_players:
+        pos = str(player_item.get("position") or "").upper()
+        rating = float(player_item.get("rating") or 0)
+        if pos == "GK":
+            buckets["goalkeeping"].append(rating)
+        elif pos in {"LB", "RB", "CB", "SW", "LWB", "RWB", "DEF"}:
+            buckets["defense"].append(rating)
+        elif pos in {"LM", "RM", "CM", "CDM", "CAM", "MID"}:
+            buckets["midfield"].append(rating)
+        elif pos in {"LW", "RW", "CF", "ST", "ATT"}:
+            buckets["attack"].append(rating)
+    strength_by_position = {
+        key: round(sum(values) / len(values), 2) if values else None
+        for key, values in buckets.items()
+    }
+
+    chemistry_inputs = [
+        len([p for p in parsed_players if p.get("steam_id")]),
+        min(10, len(recent_payload)),
+        len(team_summary["form_last20"]),
+    ]
+    chemistry_score = min(100, int(round(sum(chemistry_inputs) / 3 * 10)))
+
+    identity_candidates = [
+        ("Possession Masters", strength_by_position.get("midfield") or 0),
+        ("Counter Attackers", strength_by_position.get("attack") or 0),
+        ("Defensive Wall", strength_by_position.get("defense") or 0),
+        ("Chaos Pressers", chemistry_score / 10),
+    ]
+    team_identity = max(identity_candidates, key=lambda item: item[1])[0]
+
+    rivalries: list[dict[str, Any]] = []
+
+    trophies: list[dict[str, Any]] = []
+    awards: list[dict[str, Any]] = []
+    try:
+        async with db.acquire() as trophy_conn:
+            rivalry_rows = await trophy_conn.fetch(
+                """
+                SELECT
+                    trs.opponent_id::text AS guild_id,
+                    COALESCE(it.guild_name, CONCAT('Team ', trs.opponent_id::text)) AS team_name,
+                    COALESCE(it.guild_icon, '') AS team_icon,
+                    trs.matches_played AS matches,
+                    trs.wins,
+                    trs.draws,
+                    trs.losses,
+                    trs.goals_for,
+                    trs.goals_against,
+                    trs.rivalry_score,
+                    trs.last_played_at
+                FROM hub.team_rivalry_summary trs
+                LEFT JOIN public.iosca_teams it
+                  ON it.guild_id = trs.opponent_id
+                WHERE trs.team_id::text = $1
+                ORDER BY trs.rivalry_score DESC, trs.matches_played DESC, team_name ASC
+                LIMIT 4
+                """,
+                guild_id,
+            )
+            rivalries = _records_to_dicts(rivalry_rows)
+            trophy_rows = await trophy_conn.fetch(
+                """
+                SELECT trophy_type, title, subtitle, awarded_at, metadata
+                FROM hub.trophies
+                WHERE owner_type = 'team'
+                  AND owner_key = $1
+                ORDER BY awarded_at DESC NULLS LAST, id DESC
+                LIMIT 12
+                """,
+                guild_id,
+            )
+            trophies = _records_to_dicts(trophy_rows)
+            award_rows = await trophy_conn.fetch(
+                """
+                SELECT award_scope, award_key, title, subtitle, period_start, period_end, metadata
+                FROM hub.awards
+                WHERE owner_type = 'team'
+                  AND owner_key = $1
+                ORDER BY period_end DESC NULLS LAST, created_at DESC, id DESC
+                LIMIT 12
+                """,
+                guild_id,
+            )
+            awards = _records_to_dicts(award_rows)
+    except Exception:
+        rivalry_map: dict[str, dict[str, Any]] = {}
+        for match in recent_payload:
+            home_id = str(match.get("home_guild_id") or "")
+            away_id = str(match.get("away_guild_id") or "")
+            opponent = None
+            if home_id == guild_id:
+                opponent = match.get("away_team_name")
+            elif away_id == guild_id:
+                opponent = match.get("home_team_name")
+            if not opponent:
+                continue
+            key = str(opponent)
+            bucket = rivalry_map.setdefault(key, {"team_name": key, "matches": 0, "wins": 0, "draws": 0, "losses": 0})
+            bucket["matches"] += 1
+            result = str(match.get("result") or "").upper()
+            if result == "W":
+                bucket["wins"] += 1
+            elif result == "D":
+                bucket["draws"] += 1
+            elif result == "L":
+                bucket["losses"] += 1
+        rivalries = sorted(rivalry_map.values(), key=lambda row: row["matches"], reverse=True)[:4]
+        trophies = []
+        awards = []
 
     return {
         "team": team_payload,
         "players": parsed_players,
         "stats": stats_payload,
         "summary": team_summary,
+        "top_players": top_players,
+        "strength_by_position": strength_by_position,
+        "chemistry_score": chemistry_score,
+        "team_identity": team_identity,
+        "rivalries": rivalries,
+        "trophies": trophies,
+        "awards": awards,
         "recent_matches": recent_payload,
     }
 

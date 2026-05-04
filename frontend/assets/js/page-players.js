@@ -335,34 +335,36 @@
   function playerCard(player, index, instant) {
     const registeredLabel = player.registered_at ? fmtDate(player.registered_at) : "N/A";
     const lastSeenLabel = player.lastMatchAt ? fmtDate(player.lastMatchAt) : "N/A";
+    const appearancesLabel = Number(player.appearances || 0).toLocaleString();
+    const mainPositionLabel = player.roleLabel || player.position || "N/A";
 
     return `
       <article class="player-browser-card role-${esc(player.roleKey)}${instant ? " instant" : ""}" style="--card-index:${index};">
         <div class="player-browser-top">
           ${formatActivityPill(player)}
-          <span class="player-browser-role role-${esc(player.roleKey)}">${esc(player.roleLabel)}</span>
         </div>
         <div class="player-browser-main">
-          <img class="player-browser-avatar" src="${esc(player.display_avatar_url || player.steam_avatar_url || player.avatar_url || player.avatar_fallback_url || fallbackAvatar)}" alt="${esc(player.name)}" onerror="this.onerror=null;this.src='${fallbackAvatar}';">
+          <div class="player-browser-identity">
+            <img class="player-browser-avatar" src="${esc(player.display_avatar_url || player.steam_avatar_url || player.avatar_url || player.avatar_fallback_url || fallbackAvatar)}" alt="${esc(player.name)}" onerror="this.onerror=null;this.src='${fallbackAvatar}';">
+            <div class="player-browser-team-slot">
+              ${teamBadge(player)}
+            </div>
+          </div>
           <div class="player-browser-body">
             <div class="player-browser-header">
-              <div>
+              <div class="player-browser-heading">
                 <a class="player-browser-name" href="player.html?steam_id=${encodeURIComponent(player.steam_id)}">${esc(player.name)}</a>
-                <div class="player-browser-subtitle">${esc(player.position)}</div>
+                <div class="player-browser-subtitle">${esc(mainPositionLabel)}</div>
               </div>
               <div class="player-browser-rating">
                 <span>Rating</span>
                 <strong>${esc(formatRating(player.ratingValue))}</strong>
               </div>
             </div>
-            <div class="player-browser-tags">
-              <span class="player-browser-tag position">${esc(player.position)}</span>
-              ${teamBadge(player)}
-            </div>
             <div class="player-browser-stats">
               <div class="player-browser-stat">
                 <span>Appearances</span>
-                <strong>${esc(String(player.appearances))}</strong>
+                <strong>${esc(appearancesLabel)}</strong>
               </div>
               <div class="player-browser-stat">
                 <span>Last match</span>

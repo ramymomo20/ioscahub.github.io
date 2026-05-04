@@ -1,4 +1,4 @@
-(function () {
+﻿(function () {
   function byId(id) { return document.getElementById(id); }
 
   function esc(value) {
@@ -97,11 +97,12 @@
 
   function pageIsActive(activePage, href) {
     if (href === 'index.html') return activePage === 'index.html';
-    if (href === 'players.html') return ['players.html', 'player.html'].includes(activePage);
+    if (href === 'players.html') return ['players.html', 'player.html', 'hall-of-fame.html'].includes(activePage);
     if (href === 'teams.html') return ['teams.html', 'team.html'].includes(activePage);
     if (href === 'matches.html') return ['matches.html', 'match.html'].includes(activePage);
     if (href === 'tournaments.html') return ['tournaments.html', 'tournament.html'].includes(activePage);
     if (href === 'rankings.html') return ['rankings.html'].includes(activePage);
+    if (href === 'hall-of-fame.html') return ['hall-of-fame.html'].includes(activePage);
     if (href === 'h2h.html') return ['h2h.html'].includes(activePage);
     return activePage === href;
   }
@@ -128,6 +129,51 @@
     });
   }
 
+  function scoreLabel(match) {
+    const home = Number(match && match.home_score);
+    const away = Number(match && match.away_score);
+    const homeScore = Number.isFinite(home) ? home : 0;
+    const awayScore = Number.isFinite(away) ? away : 0;
+    return `${homeScore} - ${awayScore}`;
+  }
+
+  function resultRibbonItem(match) {
+    const id = match && match.id !== undefined && match.id !== null ? String(match.id) : '';
+    const tournament = String(match && match.tournament_name || match && match.game_type || 'Community Match').trim();
+    return `
+      <a class="results-ribbon-item" href="match.html?id=${encodeURIComponent(id)}">
+        <span class="results-ribbon-team">${esc(match && match.home_team_name || 'Home')}</span>
+        <strong class="results-ribbon-score">${esc(scoreLabel(match))}</strong>
+        <span class="results-ribbon-team">${esc(match && match.away_team_name || 'Away')}</span>
+        <span class="results-ribbon-meta">${esc(tournament)}</span>
+      </a>
+    `;
+  }
+
+  async function initResultsTicker(root) {
+    const host = root.querySelector('[data-results-ribbon]');
+    if (!host || !window.HubApi || typeof window.HubApi.matches !== 'function') return;
+    try {
+      const payload = await window.HubApi.matches({ limit: 18 });
+      const matches = Array.isArray(payload && payload.matches) ? payload.matches.slice(0, 12) : [];
+      if (!matches.length) {
+        host.innerHTML = '<div class="results-ribbon-empty">No recent results available.</div>';
+        return;
+      }
+      const track = matches.map(resultRibbonItem).join('');
+      host.innerHTML = `
+        <div class="results-ribbon-marquee">
+          <div class="results-ribbon-track">
+            ${track}
+            ${track}
+          </div>
+        </div>
+      `;
+    } catch (_) {
+      host.innerHTML = '<div class="results-ribbon-empty">Results ribbon offline.</div>';
+    }
+  }
+
   function navTemplate(activePage) {
     const nav = [
       { href: 'index.html', label: 'Home', tone: '#ff3aa7' },
@@ -136,8 +182,21 @@
         label: 'Players',
         tone: '#ff5fb9',
         children: [
-          ['players.html', 'Browser'],
-          ['rankings.html', 'Leaderboards']
+          {
+            href: 'players.html',
+            label: 'Browser',
+            description: 'Search the full player pool with filters and form cues'
+          },
+          {
+            href: 'rankings.html',
+            label: 'Leaderboards',
+            description: 'Top performers and position leaders'
+          },
+          {
+            href: 'hall-of-fame.html',
+            label: 'Hall Of Fame',
+            description: 'Prestige, trophies, awards, and long-term legacy'
+          }
         ]
       },
       {
@@ -145,8 +204,16 @@
         label: 'Teams',
         tone: '#ff7a72',
         children: [
-          ['teams.html', 'Club Browser'],
-          ['h2h.html', 'Head To Head']
+          {
+            href: 'teams.html',
+            label: 'Club Browser',
+            description: 'Browse every club and compare squad strength'
+          },
+          {
+            href: 'h2h.html',
+            label: 'Head To Head',
+            description: 'Compare clubs and recent meetings'
+          }
         ]
       },
       {
@@ -154,8 +221,16 @@
         label: 'Matches',
         tone: '#f9a43a',
         children: [
-          ['matches.html', 'Archive'],
-          ['match.html', 'Match Detail']
+          {
+            href: 'matches.html',
+            label: 'Archive',
+            description: 'Browse the full match archive with filters'
+          },
+          {
+            href: 'match.html',
+            label: 'Match Detail',
+            description: 'Deep dive into a single fixture'
+          }
         ]
       },
       {
@@ -163,8 +238,16 @@
         label: 'Tournaments',
         tone: '#58d6a6',
         children: [
-          ['tournaments.html', 'Tournaments'],
-          ['builder.html', 'Lineup Builder']
+          {
+            href: 'tournaments.html',
+            label: 'Tournaments',
+            description: 'Track active competitions, tables, and fixtures'
+          },
+          {
+            href: 'builder.html',
+            label: 'Lineup Builder',
+            description: 'Build and preview community XIs'
+          }
         ]
       },
       { href: 'servers.html', label: 'Servers', tone: '#53b5ff' },
@@ -172,56 +255,66 @@
     ];
 
     return `
-      <header class="topbar">
-        <div class="topbar-inner">
-          <a class="brand" href="index.html">
-            <span class="brand-mark">
-              <img class="brand-logo" src="assets/icons/iosca-icon.png" alt="IOSCA">
-            </span>
-            <span class="brand-copy">
-              <span class="brand-name">IOSCA Hub</span>
-              <span class="brand-subtitle">Competition Intelligence</span>
-            </span>
-          </a>
+      <header class="topbar-stack">
+        <div class="topbar">
+          <div class="topbar-inner">
+            <a class="brand" href="index.html">
+              <span class="brand-mark">
+                <img class="brand-logo" src="assets/icons/iosca-icon.png" alt="IOSCA">
+              </span>
+              <span class="brand-copy">
+                <span class="brand-name">IOSCA Hub</span>
+                <span class="brand-subtitle">Competition Intelligence</span>
+              </span>
+            </a>
 
-          <nav class="nav-strip" aria-label="Primary navigation">
-            ${nav.map((item) => {
-              const active = pageIsActive(activePage, item.href);
-              if (!item.children) {
+            <nav class="nav-strip" aria-label="Primary navigation">
+              ${nav.map((item) => {
+                const active = pageIsActive(activePage, item.href);
+                if (!item.children) {
+                  return `
+                    <a class="nav-link ${active ? 'active' : ''}" style="--nav-accent:${item.tone};" href="${item.href}">
+                      ${item.label}
+                    </a>
+                  `;
+                }
                 return `
-                  <a class="nav-link ${active ? 'active' : ''}" style="--nav-accent:${item.tone};" href="${item.href}">
-                    ${item.label}
-                  </a>
-                `;
-              }
-              return `
-                <div class="nav-group">
-                  <a class="nav-group-toggle ${active ? 'active' : ''}" style="--nav-accent:${item.tone};" href="${item.href}">
-                    <span>${item.label}</span>
-                    <span class="nav-caret">+</span>
-                  </a>
-                  <div class="nav-flyout">
-                    ${item.children.map(([href, label]) => `
-                      <a class="${pageIsActive(activePage, href) ? 'active' : ''}" href="${href}">
-                        <strong>${label}</strong>
-                        <span>${label === 'Leaderboards' ? 'Top performers and position leaders' : label === 'Head To Head' ? 'Compare clubs and recent meetings' : label === 'Match Detail' ? 'Deep dive into a single fixture' : 'Open section'}</span>
-                      </a>
-                    `).join('')}
+                  <div class="nav-group">
+                    <a class="nav-group-toggle ${active ? 'active' : ''}" style="--nav-accent:${item.tone};" href="${item.href}">
+                      <span>${item.label}</span>
+                      <span class="nav-caret">+</span>
+                    </a>
+                    <div class="nav-flyout">
+                      ${item.children.map((child) => `
+                        <a class="${pageIsActive(activePage, child.href) ? 'active' : ''}" href="${child.href}">
+                          <strong>${child.label}</strong>
+                          <span>${child.description || 'Open section'}</span>
+                        </a>
+                      `).join('')}
+                    </div>
                   </div>
-                </div>
-              `;
-            }).join('')}
-          </nav>
+                `;
+              }).join('')}
+            </nav>
 
-          <div class="topbar-actions">
-            <form class="header-search" data-hub-search-form>
-              <span>⌕</span>
-              <input data-hub-search-input type="search" placeholder="Search players or teams" autocomplete="off" spellcheck="false">
-              <select data-hub-search-target aria-label="Search category">
-                <option value="players">Players</option>
-                <option value="teams">Teams</option>
-              </select>
-            </form>
+            <div class="topbar-actions">
+              <form class="header-search" data-hub-search-form>
+                <span>&#9906;</span>
+                <input data-hub-search-input type="search" placeholder="Search players or teams" autocomplete="off" spellcheck="false">
+                <select data-hub-search-target aria-label="Search category">
+                  <option value="players">Players</option>
+                  <option value="teams">Teams</option>
+                </select>
+              </form>
+            </div>
+          </div>
+        </div>
+        <div class="results-ribbon" aria-label="Latest results">
+          <div class="results-ribbon-shell">
+            <span class="results-ribbon-status">Latest Results</span>
+            <div class="results-ribbon-feed" data-results-ribbon>
+              <div class="results-ribbon-empty">Loading results...</div>
+            </div>
           </div>
         </div>
       </header>
@@ -279,6 +372,7 @@
       </div>
     `;
     bindHeaderSearch(root);
+    initResultsTicker(root);
   }
 
   function showError(message) {
@@ -304,16 +398,16 @@
 
   function statIcons(stats) {
     const bits = [];
-    const goals = Number(stats?.goals || 0);
-    const assists = Number(stats?.assists || 0);
-    const saves = Number(stats?.keeper_saves || 0);
-    const rc = Number(stats?.red_cards || 0);
-    const yc = Number(stats?.yellow_cards || 0);
-    if (goals > 0) bits.push(`<span class="icon goal" title="Goals">G</span>`);
-    if (assists > 0) bits.push(`<span class="icon assist" title="Assists">A</span>`);
-    if (saves > 0) bits.push(`<span class="icon save" title="Saves">S</span>`);
-    if (rc > 0) bits.push(`<span class="icon card-red" title="Red card">R</span>`);
-    else if (yc > 0) bits.push(`<span class="icon card-yellow" title="Yellow card">Y</span>`);
+    const goals = Number(stats && stats.goals || 0);
+    const assists = Number(stats && stats.assists || 0);
+    const saves = Number(stats && stats.keeper_saves || 0);
+    const rc = Number(stats && stats.red_cards || 0);
+    const yc = Number(stats && stats.yellow_cards || 0);
+    if (goals > 0) bits.push('<span class="icon goal" title="Goals">G</span>');
+    if (assists > 0) bits.push('<span class="icon assist" title="Assists">A</span>');
+    if (saves > 0) bits.push('<span class="icon save" title="Saves">S</span>');
+    if (rc > 0) bits.push('<span class="icon card-red" title="Red card">R</span>');
+    else if (yc > 0) bits.push('<span class="icon card-yellow" title="Yellow card">Y</span>');
     if (!bits.length) return '';
     return `<span class="stat-icons">${bits.join('')}</span>`;
   }

@@ -86,6 +86,8 @@ def _steam_avatar_proxy_url(steam64: Any) -> str | None:
 
 def _decorate_player_rows(payload: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for item in payload:
+        if not item.get("discord_name") and item.get("player_name"):
+            item["discord_name"] = item.get("player_name")
         item["avatar_url"] = _discord_avatar_url(item.get("discord_id"))
         item["avatar_fallback_url"] = _default_discord_avatar(item.get("discord_id"))
         item["steam_profile_url"] = _steam_profile_url(item.get("steam_id"))
@@ -110,7 +112,128 @@ async def _fetch_summary(conn: asyncpg.Connection) -> dict[str, Any]:
             (SELECT COUNT(*) FROM IOS_SERVERS WHERE is_active = TRUE) AS active_servers_total
         """
     )
-    return _record_to_dict(row)
+    payload = _record_to_dict(row)
+
+    try:
+        hall_of_fame_rows, rising_star_rows, hot_player_rows, hot_team_rows = await asyncio.gather(
+            conn.fetch(
+                """
+                SELECT
+                    steam_id,
+                    discord_id,
+                    player_name,
+                    COALESCE(main_role, 'N/A') AS position,
+                    public_rating AS rating,
+                    matches_played,
+                    motm_awards,
+                    trophy_count,
+                    award_count,
+                    prestige_score
+                FROM hub.hall_of_fame_players
+                ORDER BY prestige_score DESC, public_rating DESC NULLS LAST, player_name ASC
+                LIMIT 6
+                """
+            ),
+            conn.fetch(
+                """
+                SELECT
+                    steam_id,
+                    discord_id,
+                    player_name,
+                    COALESCE(main_role, 'N/A') AS position,
+                    public_rating AS rating,
+                    matches_played,
+                    recent5_goals,
+                    recent5_assists,
+                    recent7_motm,
+                    current_win_streak,
+                    rise_score
+                FROM hub.rising_star_players
+                ORDER BY rise_score DESC, public_rating DESC NULLS LAST, player_name ASC
+                LIMIT 6
+                """
+            ),
+            conn.fetch(
+                """
+                SELECT
+                    pfs.steam_id,
+                    ps.discord_id,
+                    ps.player_name,
+                    COALESCE(ps.main_role, 'N/A') AS position,
+                    ps.public_rating AS rating,
+                    pfs.current_win_streak,
+                    pfs.current_unbeaten_streak,
+                    pfs.recent5_goals,
+                    pfs.recent5_assists,
+                    pfs.recent7_motm,
+                    pfs.recent5_avg_rating
+                FROM hub.player_form_summary pfs
+                JOIN hub.player_summary ps
+                  ON ps.steam_id = pfs.steam_id
+                WHERE COALESCE(ps.matches_played, 0) >= 3
+                  AND (
+                    COALESCE(pfs.current_win_streak, 0) > 0
+                    OR COALESCE(pfs.recent5_goals, 0) > 0
+                    OR COALESCE(pfs.recent7_motm, 0) > 0
+                  )
+                ORDER BY
+                    COALESCE(pfs.current_win_streak, 0) DESC,
+                    COALESCE(pfs.recent7_motm, 0) DESC,
+                    COALESCE(pfs.recent5_goals, 0) DESC,
+                    COALESCE(ps.public_rating, 0) DESC,
+                    ps.player_name ASC
+                LIMIT 6
+                """
+            ),
+            conn.fetch(
+                """
+                SELECT
+                    tfs.guild_id::text AS guild_id,
+                    ts.guild_name,
+                    ts.guild_icon,
+                    ts.average_rating,
+                    ts.matches_played,
+                    ts.win_rate,
+                    tfs.current_win_streak,
+                    tfs.current_unbeaten_streak,
+                    tfs.recent5_points,
+                    tfs.recent5_results
+                FROM hub.team_form_summary tfs
+                JOIN hub.team_summary ts
+                  ON ts.guild_id = tfs.guild_id
+                WHERE COALESCE(ts.matches_played, 0) >= 3
+                  AND (
+                    COALESCE(tfs.current_win_streak, 0) > 0
+                    OR COALESCE(tfs.current_unbeaten_streak, 0) > 1
+                  )
+                ORDER BY
+                    COALESCE(tfs.current_win_streak, 0) DESC,
+                    COALESCE(tfs.recent5_points, 0) DESC,
+                    COALESCE(ts.win_rate, 0) DESC,
+                    ts.guild_name ASC
+                LIMIT 6
+                """
+            ),
+        )
+        hall_of_fame = _decorate_player_rows(_records_to_dicts(hall_of_fame_rows))
+        rising_stars = _decorate_player_rows(_records_to_dicts(rising_star_rows))
+        hot_players = _decorate_player_rows(_records_to_dicts(hot_player_rows))
+        hot_teams = _records_to_dicts(hot_team_rows)
+    except Exception:
+        hall_of_fame = []
+        rising_stars = []
+        hot_players = []
+        hot_teams = []
+
+    payload["storyboards"] = {
+        "hall_of_fame": hall_of_fame,
+        "rising_stars": rising_stars,
+        "streak_center": {
+            "players": hot_players,
+            "teams": hot_teams,
+        },
+    }
+    return payload
 
 
 async def _fetch_matches(conn: asyncpg.Connection, limit: int) -> dict[str, Any]:
@@ -205,6 +328,35 @@ async def _fetch_rankings(conn: asyncpg.Connection, limit: int) -> dict[str, Any
         "best_attacker": best_for({"CF", "LW", "RW", "ST", "ATT"}),
     }
     return {"players": players, "widgets": widgets}
+
+
+async def _fetch_hall_of_fame(conn: asyncpg.Connection, limit: int) -> dict[str, Any]:
+    try:
+        rows = await conn.fetch(
+            """
+            SELECT
+                steam_id,
+                discord_id,
+                player_name,
+                COALESCE(main_role, 'N/A') AS position,
+                public_rating AS rating,
+                matches_played,
+                goals,
+                assists,
+                motm_awards,
+                trophy_count,
+                award_count,
+                prestige_score,
+                last_match_at
+            FROM hub.hall_of_fame_players
+            ORDER BY prestige_score DESC, public_rating DESC NULLS LAST, player_name ASC
+            LIMIT $1
+            """,
+            limit,
+        )
+    except Exception:
+        rows = []
+    return {"players": _decorate_player_rows(_records_to_dicts(rows))}
 
 
 async def _fetch_players(conn: asyncpg.Connection, limit: int) -> dict[str, Any]:
@@ -438,6 +590,7 @@ async def _run(
     matches_limit: int,
     players_limit: int,
     rankings_limit: int,
+    hall_of_fame_limit: int,
 ) -> int:
     if asyncpg is None:
         print("Missing dependency: asyncpg")
@@ -450,10 +603,11 @@ async def _run(
     conn = await asyncpg.connect(db_url)
     try:
         generated_at = datetime.now(timezone.utc).isoformat()
-        summary, matches_payload, rankings_payload, players_payload, teams_payload, tournaments_payload = await asyncio.gather(
+        summary, matches_payload, rankings_payload, hall_of_fame_payload, players_payload, teams_payload, tournaments_payload = await asyncio.gather(
             _fetch_summary(conn),
             _fetch_matches(conn, matches_limit),
             _fetch_rankings(conn, rankings_limit),
+            _fetch_hall_of_fame(conn, hall_of_fame_limit),
             _fetch_players(conn, players_limit),
             _fetch_teams(conn),
             _fetch_tournaments(conn),
@@ -482,6 +636,7 @@ async def _run(
     files_to_write: dict[Path, dict[str, Any]] = {
         legacy_output_file: legacy_payload,
         output_dir / "home.json": home_payload,
+        output_dir / "hall-of-fame.json": {"generated_at": generated_at, **hall_of_fame_payload},
         output_dir / "matches.json": {"generated_at": generated_at, **matches_payload},
         output_dir / "rankings.json": {"generated_at": generated_at, **rankings_payload},
         output_dir / "players.json": {"generated_at": generated_at, **players_payload},
@@ -535,6 +690,12 @@ def main() -> int:
         default=200,
         help="How many ranked players to export.",
     )
+    parser.add_argument(
+        "--hall-of-fame-limit",
+        type=int,
+        default=80,
+        help="How many hall of fame players to export.",
+    )
     args = parser.parse_args()
 
     db_url = str(args.db_url or "").strip()
@@ -549,6 +710,7 @@ def main() -> int:
             matches_limit=int(args.matches_limit),
             players_limit=int(args.players_limit),
             rankings_limit=int(args.rankings_limit),
+            hall_of_fame_limit=int(args.hall_of_fame_limit),
         )
     )
 
