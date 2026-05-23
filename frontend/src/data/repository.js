@@ -6,12 +6,15 @@ const listeners = new Set()
 const DEFAULT_PAGE_SIZE = 200
 const TEAM_PAGE_SIZE = 250
 const MAX_PAGINATION_PAGES = 50
+const API_RESPONSE_CACHE_TTL_MS = 2 * 60 * 1000
+const API_RESPONSE_CACHE_PREFIX = 'iosca-hub-response:v2:'
 
 let bootstrapPromise = null
 const playerDetailPromises = new Map()
 const matchDetailPromises = new Map()
 const teamDetailPromises = new Map()
 const tournamentDetailPromises = new Map()
+const apiRequestPromises = new Map()
 
 let state = buildInitialState()
 
@@ -95,21 +98,107 @@ function getApiBaseUrl() {
 
 const API_BASE_URL = getApiBaseUrl()
 
+function getStorage() {
+  if (typeof window === 'undefined') {
+    return null
+  }
+
+  try {
+    return window.sessionStorage
+  } catch {
+    return null
+  }
+}
+
+function getApiCacheKey(path) {
+  return `${API_RESPONSE_CACHE_PREFIX}${path}`
+}
+
+function readCachedApiResponse(path) {
+  const storage = getStorage()
+  if (!storage) {
+    return null
+  }
+
+  try {
+    const raw = storage.getItem(getApiCacheKey(path))
+    if (!raw) {
+      return null
+    }
+
+    const cached = JSON.parse(raw)
+    if (!cached || typeof cached !== 'object') {
+      return null
+    }
+
+    if (Date.now() - Number(cached.cachedAt ?? 0) > API_RESPONSE_CACHE_TTL_MS) {
+      storage.removeItem(getApiCacheKey(path))
+      return null
+    }
+
+    return cached.data ?? null
+  } catch {
+    return null
+  }
+}
+
+function writeCachedApiResponse(path, data) {
+  const storage = getStorage()
+  if (!storage) {
+    return
+  }
+
+  try {
+    storage.setItem(
+      getApiCacheKey(path),
+      JSON.stringify({
+        cachedAt: Date.now(),
+        data,
+      })
+    )
+  } catch {
+    // Ignore storage quota and serialization failures.
+  }
+}
+
 async function fetchJson(path) {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const cached = readCachedApiResponse(path)
+  if (cached !== null) {
+    return cached
+  }
+
+  if (apiRequestPromises.has(path)) {
+    return apiRequestPromises.get(path)
+  }
+
+  const promise = fetch(`${API_BASE_URL}${path}`, {
     headers: {
       Accept: 'application/json',
     },
   })
+    .then(async (response) => {
+      if (!response.ok) {
+        throw new Error(`Request failed: ${response.status} ${response.statusText}`)
+      }
 
-  if (!response.ok) {
-    throw new Error(`Request failed: ${response.status} ${response.statusText}`)
-  }
+      const data = await response.json()
+      writeCachedApiResponse(path, data)
+      return data
+    })
+    .finally(() => {
+      apiRequestPromises.delete(path)
+    })
 
-  return response.json()
+  apiRequestPromises.set(path, promise)
+  return promise
 }
 
 async function fetchJsonOrDefault(path, fallbackValue) {
+  const cached = readCachedApiResponse(path)
+  if (cached !== null) {
+    return cached
+  }
+
   const response = await fetch(`${API_BASE_URL}${path}`, {
     headers: {
       Accept: 'application/json',
@@ -124,7 +213,9 @@ async function fetchJsonOrDefault(path, fallbackValue) {
     throw new Error(`Request failed: ${response.status} ${response.statusText}`)
   }
 
-  return response.json()
+  const data = await response.json()
+  writeCachedApiResponse(path, data)
+  return data
 }
 
 async function fetchJsonSettled(path, fallbackValue = []) {
@@ -248,15 +339,40 @@ async function ensureBootstrapLoaded() {
     bootstrapError: null,
   }))
 
-  bootstrapPromise = Promise.all([
-    settleTask(fetchJson(withPagination('/api/teams', TEAM_PAGE_SIZE, 0))),
-    settleTask(fetchAllPages('/api/players', DEFAULT_PAGE_SIZE)),
-    settleTask(fetchAllPages('/api/matches', DEFAULT_PAGE_SIZE)),
-    settleTask(fetchJson(withPagination('/api/tournaments', 100, 0))),
-    fetchAllPagesOrDefault('/api/media', [], DEFAULT_PAGE_SIZE),
-    settleTask(fetchJson('/api/summary'), null),
-  ])
-    .then(([teamsResult, playersResult, matchesResult, tournamentsResult, rawMedia, summaryResult]) => {
+  bootstrapPromise = settleTask(fetchJson('/api/bootstrap'), null)
+    .then(async (bootstrapResult) => {
+      if (bootstrapResult && !bootstrapResult.__hubFetchError && typeof bootstrapResult === 'object') {
+        const mappedState = applyDerivedState({
+          ...state,
+          bootstrapStatus: 'loaded',
+          bootstrapError: null,
+          teams: Array.isArray(bootstrapResult.teams) ? bootstrapResult.teams.map(mapTeamSummary) : [],
+          players: Array.isArray(bootstrapResult.players) ? bootstrapResult.players.map(mapPlayerSummary) : [],
+          matches: Array.isArray(bootstrapResult.matches) ? bootstrapResult.matches.map(mapMatchSummary) : [],
+          tournaments: Array.isArray(bootstrapResult.tournaments) ? bootstrapResult.tournaments.map(mapTournamentSummary) : [],
+          media: Array.isArray(bootstrapResult.media) ? bootstrapResult.media.map(mapMediaItem) : [],
+          summary: bootstrapResult.summary ?? null,
+        })
+
+        setState(mappedState)
+        return mappedState
+      }
+
+      return Promise.all([
+        settleTask(fetchJson(withPagination('/api/teams', TEAM_PAGE_SIZE, 0))),
+        settleTask(fetchAllPages('/api/players', DEFAULT_PAGE_SIZE)),
+        settleTask(fetchAllPages('/api/matches', DEFAULT_PAGE_SIZE)),
+        settleTask(fetchJson(withPagination('/api/tournaments', 100, 0))),
+        fetchAllPagesOrDefault('/api/media', [], DEFAULT_PAGE_SIZE),
+        settleTask(fetchJson('/api/summary'), null),
+      ])
+    })
+    .then((bootstrapOrLegacy) => {
+      if (!Array.isArray(bootstrapOrLegacy)) {
+        return bootstrapOrLegacy
+      }
+
+      const [teamsResult, playersResult, matchesResult, tournamentsResult, rawMedia, summaryResult] = bootstrapOrLegacy
       const failedResults = [teamsResult, playersResult, matchesResult, tournamentsResult]
         .filter((result) => result && result.__hubFetchError)
       if (failedResults.length === 4) {
@@ -897,11 +1013,12 @@ function mapMatchSummary(raw) {
 
 function mapMatchDetail(rawMatch) {
   const summary = mapMatchSummary(rawMatch)
-  const playerStats = (rawMatch.player_stats ?? []).map(mapPerformance)
+  const lineupSideByPlayer = buildLineupSideLookup(rawMatch.lineups ?? [])
+  const playerStats = (rawMatch.player_stats ?? []).map((entry) => mapPerformance(entry, summary, lineupSideByPlayer))
   const statsByPlayer = new Map(playerStats.map((entry) => [entry.playerId, entry]))
   const namesByPlayer = new Map(playerStats.map((entry) => [entry.playerId, entry.playerName]))
 
-  const events = (rawMatch.events ?? []).map((entry) => mapEvent(entry, namesByPlayer))
+  const events = (rawMatch.events ?? []).map((entry) => mapEvent(entry, namesByPlayer, summary, lineupSideByPlayer))
   const groupedEvents = groupEventsByPlayer(events)
   const lineups = buildDetailedLineups(rawMatch.lineups ?? [], statsByPlayer, groupedEvents)
 
@@ -1044,7 +1161,18 @@ function mapPlayerMatchLog(rawMatch, playerId) {
   }
 }
 
-function mapPerformance(raw) {
+function mapPerformance(raw, matchSummary = null, lineupSideByPlayer = null) {
+  const teamSide = inferEntitySide(
+    {
+      rawSide: raw.team_side,
+      teamId: raw.team_guild_id,
+      teamName: raw.guild_team_name,
+      playerId: raw.steam_id,
+    },
+    matchSummary,
+    lineupSideByPlayer
+  )
+
   return {
     playerId: raw.steam_id ? String(raw.steam_id) : null,
     playerName: raw.player_name ?? '',
@@ -1076,19 +1204,28 @@ function mapPerformance(raw) {
     yellowCards: toNumber(raw.yellow_cards),
     redCards: toNumber(raw.red_cards),
     position: normalizePosition(raw.position_code),
-    teamSide: normalizeSide(raw.team_side),
+    teamSide,
     isMatchMvp: Boolean(raw.is_match_mvp),
   }
 }
 
-function mapEvent(raw, namesByPlayer) {
+function mapEvent(raw, namesByPlayer, matchSummary = null, lineupSideByPlayer = null) {
   const type = normalizeEventType(raw.event_type || raw.raw_event)
   const player1 = raw.player1_steam_id ? String(raw.player1_steam_id) : null
   const player2 = raw.player2_steam_id ? String(raw.player2_steam_id) : null
+  const side = inferEntitySide(
+    {
+      rawSide: raw.team_side,
+      teamId: raw.team_guild_id,
+      playerId: player1,
+    },
+    matchSummary,
+    lineupSideByPlayer
+  )
 
   return {
     id: String(raw.source_event_id),
-    side: normalizeSide(raw.team_side),
+    side,
     teamId: raw.team_guild_id ? String(raw.team_guild_id) : null,
     type,
     minute: toNumber(raw.minute || 0),
@@ -1146,6 +1283,53 @@ function enrichTournaments(tournaments, teams, players) {
   })
 }
 
+function buildLineupSideLookup(rawLineups = []) {
+  return rawLineups.reduce((accumulator, entry) => {
+    const playerId = entry.steam_id != null ? String(entry.steam_id) : null
+    const side = normalizeSide(entry.side)
+
+    if (playerId && side) {
+      accumulator.set(playerId, side)
+    }
+
+    return accumulator
+  }, new Map())
+}
+
+function inferEntitySide(entity, matchSummary = null, lineupSideByPlayer = null) {
+  const explicitSide = normalizeSide(entity?.rawSide)
+  if (explicitSide) {
+    return explicitSide
+  }
+
+  const playerId = entity?.playerId != null ? String(entity.playerId) : null
+  if (playerId && lineupSideByPlayer?.has(playerId)) {
+    return lineupSideByPlayer.get(playerId) ?? null
+  }
+
+  const teamId = entity?.teamId != null ? String(entity.teamId) : null
+  if (teamId && matchSummary) {
+    if (matchSummary.homeTeamId && teamId === String(matchSummary.homeTeamId)) {
+      return 'home'
+    }
+    if (matchSummary.awayTeamId && teamId === String(matchSummary.awayTeamId)) {
+      return 'away'
+    }
+  }
+
+  const comparableTeamName = normalizeComparableLabel(entity?.teamName)
+  if (comparableTeamName && matchSummary) {
+    if (comparableTeamName === normalizeComparableLabel(matchSummary.homeTeamName)) {
+      return 'home'
+    }
+    if (comparableTeamName === normalizeComparableLabel(matchSummary.awayTeamName)) {
+      return 'away'
+    }
+  }
+
+  return null
+}
+
 function buildDetailedLineups(rawLineups, statsByPlayer, groupedEvents) {
   const lineups = {
     home: [],
@@ -1155,7 +1339,7 @@ function buildDetailedLineups(rawLineups, statsByPlayer, groupedEvents) {
   rawLineups.forEach((entry) => {
     const playerId = entry.steam_id ? String(entry.steam_id) : null
     const statLine = playerId ? statsByPlayer.get(playerId) : null
-    const side = normalizeSide(entry.side)
+    const side = normalizeSide(entry.side, 'home')
     const events = side === 'away' ? groupedEvents.away : groupedEvents.home
     const eventSummary = playerId ? events.get(playerId) : null
 
@@ -1191,7 +1375,7 @@ function groupEventsByPlayer(events) {
   }
 
   events.forEach((event) => {
-    if (!event.playerId || !['goal', 'own-goal', 'yellow-card', 'second_yellow', 'red-card', 'save', 'miss'].includes(event.type)) {
+    if (!event.side || !event.playerId || !['goal', 'own-goal', 'yellow-card', 'second_yellow', 'red-card', 'save', 'miss'].includes(event.type)) {
       return
     }
 
@@ -1352,7 +1536,7 @@ function buildGameHighlights(events) {
 
 function buildShotMap(events) {
   return events
-    .filter((event) => ['goal', 'save', 'miss', 'own-goal'].includes(event.type))
+    .filter((event) => event.side && ['goal', 'save', 'miss', 'own-goal'].includes(event.type))
     .map((event) => {
       const coordinates = toShotMapCoordinates(event)
       if (!coordinates) {
@@ -1383,16 +1567,61 @@ function buildShotZoneMaps(events) {
 }
 
 function buildTournamentStandingsGroups(rawTournament, fixtures) {
-  const teamLeagueById = new Map(
-    (rawTournament.teams ?? [])
-      .map((entry) => [entry.guild_id != null ? String(entry.guild_id) : null, normalizeTournamentLeagueKey(entry.league_key)])
-      .filter(([teamId]) => teamId)
-  )
+  const teamLeagueById = new Map()
+  const teamLeagueByName = new Map()
+  const explicitLeagueKeys = new Set()
+
+  ;(rawTournament.teams ?? []).forEach((entry) => {
+    const leagueKey = normalizeTournamentLeagueKey(entry.league_key)
+    const teamId = entry.guild_id != null ? String(entry.guild_id) : null
+    const teamName = normalizeComparableLabel(entry.team_name)
+
+    if (leagueKey !== 'Table') {
+      explicitLeagueKeys.add(leagueKey)
+    }
+    if (teamId) {
+      teamLeagueById.set(teamId, leagueKey)
+    }
+    if (teamName) {
+      teamLeagueByName.set(teamName, leagueKey)
+    }
+  })
+
+  fixtures.forEach((fixture) => {
+    const leagueKey = normalizeTournamentLeagueKey(fixture.leagueKey)
+    const homeId = fixture.homeTeamId ? String(fixture.homeTeamId) : null
+    const awayId = fixture.awayTeamId ? String(fixture.awayTeamId) : null
+    const homeName = normalizeComparableLabel(fixture.homeTeamName)
+    const awayName = normalizeComparableLabel(fixture.awayTeamName)
+
+    if (leagueKey !== 'Table') {
+      explicitLeagueKeys.add(leagueKey)
+    }
+    if (homeId && !teamLeagueById.has(homeId)) {
+      teamLeagueById.set(homeId, leagueKey)
+    }
+    if (awayId && !teamLeagueById.has(awayId)) {
+      teamLeagueById.set(awayId, leagueKey)
+    }
+    if (homeName && !teamLeagueByName.has(homeName)) {
+      teamLeagueByName.set(homeName, leagueKey)
+    }
+    if (awayName && !teamLeagueByName.has(awayName)) {
+      teamLeagueByName.set(awayName, leagueKey)
+    }
+  })
+
   const fixturesByLeague = groupBy(fixtures, (fixture) => fixture.leagueKey || 'Table')
-  const standingsByLeague = groupBy(
-    rawTournament.standings ?? [],
-    (row) => teamLeagueById.get(row.guild_id != null ? String(row.guild_id) : '') || normalizeTournamentLeagueKey(row.league_key)
-  )
+  const standingsByLeague = (rawTournament.standings ?? []).reduce((accumulator, row) => {
+    const leagueKey = resolveTournamentStandingsLeagueKey(row, teamLeagueById, teamLeagueByName, explicitLeagueKeys)
+    if (!leagueKey) {
+      return accumulator
+    }
+
+    accumulator[leagueKey] = accumulator[leagueKey] ?? []
+    accumulator[leagueKey].push(row)
+    return accumulator
+  }, {})
 
   return Object.entries(standingsByLeague)
     .sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey, undefined, { numeric: true, sensitivity: 'base' }))
@@ -1767,8 +1996,12 @@ function normalizePosition(position, rawPlayer = null) {
   return 'CM'
 }
 
-function normalizeSide(value) {
-  return String(value ?? '').toLowerCase() === 'away' ? 'away' : 'home'
+function normalizeSide(value, fallback = null) {
+  const normalized = String(value ?? '').trim().toLowerCase()
+  if (normalized === 'home' || normalized === 'away') {
+    return normalized
+  }
+  return fallback
 }
 
 function normalizeEventType(value) {
@@ -1865,6 +2098,32 @@ function compareTeamsForRanking(left, right) {
 function normalizeTournamentLeagueKey(value) {
   const text = String(value ?? '').trim()
   return text || 'Table'
+}
+
+function resolveTournamentStandingsLeagueKey(row, teamLeagueById, teamLeagueByName, explicitLeagueKeys) {
+  const teamId = row.guild_id != null ? String(row.guild_id) : null
+  if (teamId && teamLeagueById.has(teamId)) {
+    return teamLeagueById.get(teamId)
+  }
+
+  const teamName = normalizeComparableLabel(row.team_name)
+  if (teamName && teamLeagueByName.has(teamName)) {
+    return teamLeagueByName.get(teamName)
+  }
+
+  const rowLeagueKey = normalizeTournamentLeagueKey(row.league_key)
+  if (rowLeagueKey !== 'Table' || explicitLeagueKeys.size <= 1) {
+    return rowLeagueKey
+  }
+
+  return null
+}
+
+function normalizeComparableLabel(value) {
+  return String(value ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]+/g, ' ')
 }
 
 function formatTournamentLeagueLabel(leagueKey) {

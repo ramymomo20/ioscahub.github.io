@@ -12,6 +12,7 @@ export function PlayersPage() {
   const [sortBy, setSortBy] = useState('rating')
 
   const filteredPlayers = [...players]
+    .filter((player) => Boolean(player.discordId))
     .filter((player) => player.name.toLowerCase().includes(search.toLowerCase()))
     .filter((player) => teamFilter === 'all' || player.teamId === teamFilter)
     .filter((player) => positionFilter === 'all' || player.position === positionFilter)

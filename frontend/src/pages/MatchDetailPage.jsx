@@ -16,8 +16,8 @@ export function MatchDetailPage() {
     return <Navigate to="/matches" replace />
   }
 
-  const homeTeam = getTeamById(match.homeTeamId)
-  const awayTeam = getTeamById(match.awayTeamId)
+  const homeTeam = getTeamById(match.homeTeamId) ?? buildTransientMatchTeam(match.homeTeamId, match.homeTeamName, 'HM')
+  const awayTeam = getTeamById(match.awayTeamId) ?? buildTransientMatchTeam(match.awayTeamId, match.awayTeamName, 'AW')
   const mvp = getPlayerById(match.mvpId)
 
   return (
@@ -100,6 +100,20 @@ function MatchHeroTeam({ team, isWinner = false }) {
       <strong className="match-hero-team-name">{team.name}</strong>
     </Link>
   )
+}
+
+function buildTransientMatchTeam(teamId, teamName, fallbackShortName) {
+  const safeName = String(teamName ?? '').trim() || 'Unknown Team'
+  const safeId = teamId != null ? String(teamId) : `transient-${safeName.toLowerCase().replace(/\s+/g, '-')}`
+
+  return {
+    id: safeId,
+    name: safeName,
+    shortName: safeName.slice(0, 3).toUpperCase() || fallbackShortName,
+    crest: safeName.slice(0, 2).toUpperCase() || fallbackShortName,
+    crestUrl: null,
+    colors: ['#46d7ff', '#1e63ff'],
+  }
 }
 
 function EventStack({ entries, align = 'left' }) {

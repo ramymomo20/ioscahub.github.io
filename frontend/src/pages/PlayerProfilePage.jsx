@@ -10,6 +10,7 @@ export function PlayerProfilePage() {
   const player = getPlayerById(playerId)
   const [page, setPage] = useState(0)
   const steamIcon = `${import.meta.env.BASE_URL}icons/steam-icon.png`
+  const steamProfileUrl = getSteamProfileUrl(playerId)
 
   if (!player && loading) {
     return null
@@ -47,16 +48,18 @@ export function PlayerProfilePage() {
           <div className="profile-badges">
             <TeamInlineLink teamId={player.teamId} />
             <FormPills values={getPlayerForm(matchLogs, player.id)} />
-            <a
-              className="steam-redirect-badge steam-redirect-badge-wide"
-              href={`https://steamcommunity.com/profiles/${player.id}`}
-              target="_blank"
-              rel="noreferrer"
-              aria-label="Open Steam profile"
-            >
-              <img src={steamIcon} alt="" />
-              <span>Steam Profile</span>
-            </a>
+            {steamProfileUrl ? (
+              <a
+                className="steam-redirect-badge steam-redirect-badge-wide"
+                href={steamProfileUrl}
+                target="_blank"
+                rel="noreferrer"
+                aria-label="Open Steam profile"
+              >
+                <img src={steamIcon} alt="" />
+                <span>Steam Profile</span>
+              </a>
+            ) : null}
           </div>
           <div className="profile-focus-grid">
             <div className="profile-focus-card">
@@ -218,6 +221,17 @@ export function PlayerProfilePage() {
       </section>
     </div>
   )
+}
+
+function getSteamProfileUrl(value) {
+  const text = String(value ?? '').trim()
+  if (!text) {
+    return null
+  }
+  if (/^\d{17,20}$/.test(text)) {
+    return `https://steamcommunity.com/profiles/${text}`
+  }
+  return `https://steamcommunity.com/id/${encodeURIComponent(text)}`
 }
 
 function ActivityMap({ values }) {

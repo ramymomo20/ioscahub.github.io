@@ -118,6 +118,17 @@ async def _get_sync_watermark(hub_pool: asyncpg.Pool, key: str) -> datetime | No
     return value if isinstance(value, datetime) else None
 
 
+async def _resolve_watermark(
+    hub_pool: asyncpg.Pool,
+    key: str,
+    *,
+    force_full: bool = False,
+) -> datetime | None:
+    if force_full:
+        return None
+    return await _get_sync_watermark(hub_pool, key)
+
+
 async def _upsert_rows(
     hub_pool: asyncpg.Pool,
     table: str,
@@ -324,8 +335,8 @@ async def _fetch_changed_match_scope_for_events(
     return scope_ids, _max_source_updated_at(rows, "changed_at")
 
 
-async def sync_players(pg_pool: asyncpg.Pool, hub_pool: asyncpg.Pool) -> SyncResult:
-    watermark = await _get_sync_watermark(hub_pool, "hub_players")
+async def sync_players(pg_pool: asyncpg.Pool, hub_pool: asyncpg.Pool, *, force_full: bool = False) -> SyncResult:
+    watermark = await _resolve_watermark(hub_pool, "hub_players", force_full=force_full)
     params: list[Any] = []
     where_sql = ""
     if watermark is not None:
@@ -374,8 +385,8 @@ async def sync_players(pg_pool: asyncpg.Pool, hub_pool: asyncpg.Pool) -> SyncRes
     )
 
 
-async def sync_teams(pg_pool: asyncpg.Pool, hub_pool: asyncpg.Pool) -> SyncResult:
-    watermark = await _get_sync_watermark(hub_pool, "hub_teams")
+async def sync_teams(pg_pool: asyncpg.Pool, hub_pool: asyncpg.Pool, *, force_full: bool = False) -> SyncResult:
+    watermark = await _resolve_watermark(hub_pool, "hub_teams", force_full=force_full)
     params: list[Any] = []
     where_sql = ""
     if watermark is not None:
@@ -422,8 +433,8 @@ async def sync_teams(pg_pool: asyncpg.Pool, hub_pool: asyncpg.Pool) -> SyncResul
     )
 
 
-async def sync_matches(pg_pool: asyncpg.Pool, hub_pool: asyncpg.Pool) -> SyncResult:
-    watermark = await _get_sync_watermark(hub_pool, "hub_matches")
+async def sync_matches(pg_pool: asyncpg.Pool, hub_pool: asyncpg.Pool, *, force_full: bool = False) -> SyncResult:
+    watermark = await _resolve_watermark(hub_pool, "hub_matches", force_full=force_full)
     params: list[Any] = []
     if watermark is not None:
         params.append(watermark)
@@ -549,8 +560,8 @@ async def sync_matches(pg_pool: asyncpg.Pool, hub_pool: asyncpg.Pool) -> SyncRes
     )
 
 
-async def sync_match_lineups(pg_pool: asyncpg.Pool, hub_pool: asyncpg.Pool) -> SyncResult:
-    watermark = await _get_sync_watermark(hub_pool, "hub_match_lineups")
+async def sync_match_lineups(pg_pool: asyncpg.Pool, hub_pool: asyncpg.Pool, *, force_full: bool = False) -> SyncResult:
+    watermark = await _resolve_watermark(hub_pool, "hub_match_lineups", force_full=force_full)
     scope_ids, max_scope_updated_at = await _fetch_changed_match_scope_from_match_stats(pg_pool, watermark)
 
     if watermark is not None and not scope_ids:
@@ -612,8 +623,8 @@ async def sync_match_lineups(pg_pool: asyncpg.Pool, hub_pool: asyncpg.Pool) -> S
     )
 
 
-async def sync_match_player_stats(pg_pool: asyncpg.Pool, hub_pool: asyncpg.Pool) -> SyncResult:
-    watermark = await _get_sync_watermark(hub_pool, "hub_match_player_stats")
+async def sync_match_player_stats(pg_pool: asyncpg.Pool, hub_pool: asyncpg.Pool, *, force_full: bool = False) -> SyncResult:
+    watermark = await _resolve_watermark(hub_pool, "hub_match_player_stats", force_full=force_full)
     scope_ids, max_scope_updated_at = await _fetch_changed_match_scope_for_player_stats(pg_pool, watermark)
 
     if watermark is not None and not scope_ids:
@@ -627,18 +638,51 @@ async def sync_match_player_stats(pg_pool: asyncpg.Pool, hub_pool: asyncpg.Pool)
 
     rows = _rows_as_dicts(await pg_pool.fetch(
         f"""
+        WITH lineup_side AS (
+            SELECT DISTINCT ON (expanded.match_stats_id, expanded.steam_id)
+                expanded.match_stats_id,
+                expanded.side,
+                expanded.steam_id
+            FROM (
+                SELECT
+                    ms.id AS match_stats_id,
+                    lineup.side,
+                    NULLIF(TRIM(lineup.player ->> 'steam_id'), '') AS steam_id
+                FROM match_stats ms
+                CROSS JOIN LATERAL (
+                    SELECT 'home'::text AS side, home.player
+                    FROM jsonb_array_elements(COALESCE(ms.home_lineup, '[]'::jsonb)) AS home(player)
+                    UNION ALL
+                    SELECT 'away'::text AS side, away.player
+                    FROM jsonb_array_elements(COALESCE(ms.away_lineup, '[]'::jsonb)) AS away(player)
+                ) lineup
+            ) expanded
+            WHERE expanded.steam_id IS NOT NULL
+            ORDER BY expanded.match_stats_id, expanded.steam_id, expanded.side
+        )
         SELECT
             pmd.id AS source_player_match_data_id,
             ms.id AS match_stats_id,
             ms.match_id,
             pmd.steam_id,
-            pmd.guild_id AS team_guild_id,
+            COALESCE(
+                pmd.guild_id::text,
+                CASE
+                    WHEN pmd.guild_id::text = ms.home_guild_id::text THEN ms.home_guild_id::text
+                    WHEN pmd.guild_id::text = ms.away_guild_id::text THEN ms.away_guild_id::text
+                    WHEN pmd.guild_team_name = ms.home_team_name THEN ms.home_guild_id::text
+                    WHEN pmd.guild_team_name = ms.away_team_name THEN ms.away_guild_id::text
+                    WHEN lineup_side.side = 'home' THEN ms.home_guild_id::text
+                    WHEN lineup_side.side = 'away' THEN ms.away_guild_id::text
+                    ELSE NULL
+                END
+            ) AS team_guild_id,
             CASE
                 WHEN pmd.guild_id::text = ms.home_guild_id::text THEN 'home'
                 WHEN pmd.guild_id::text = ms.away_guild_id::text THEN 'away'
                 WHEN pmd.guild_team_name = ms.home_team_name THEN 'home'
                 WHEN pmd.guild_team_name = ms.away_team_name THEN 'away'
-                ELSE NULL
+                ELSE lineup_side.side
             END AS team_side,
             pmd.guild_team_name,
             pmd.player_name,
@@ -680,6 +724,9 @@ async def sync_match_player_stats(pg_pool: asyncpg.Pool, hub_pool: asyncpg.Pool)
         FROM player_match_data pmd
         JOIN match_stats ms
           ON {PLAYER_MATCH_JOIN_SQL}
+        LEFT JOIN lineup_side
+          ON lineup_side.match_stats_id = ms.id
+         AND lineup_side.steam_id = pmd.steam_id::text
         {where_sql}
         """,
         *params,
@@ -719,8 +766,8 @@ async def sync_match_player_stats(pg_pool: asyncpg.Pool, hub_pool: asyncpg.Pool)
     )
 
 
-async def sync_match_events(pg_pool: asyncpg.Pool, hub_pool: asyncpg.Pool) -> SyncResult:
-    watermark = await _get_sync_watermark(hub_pool, "hub_match_events")
+async def sync_match_events(pg_pool: asyncpg.Pool, hub_pool: asyncpg.Pool, *, force_full: bool = False) -> SyncResult:
+    watermark = await _resolve_watermark(hub_pool, "hub_match_events", force_full=force_full)
     scope_ids, max_scope_updated_at = await _fetch_changed_match_scope_for_events(pg_pool, watermark)
 
     if watermark is not None and not scope_ids:
@@ -802,8 +849,8 @@ async def sync_match_events(pg_pool: asyncpg.Pool, hub_pool: asyncpg.Pool) -> Sy
     )
 
 
-async def sync_rating_history(pg_pool: asyncpg.Pool, hub_pool: asyncpg.Pool) -> SyncResult:
-    watermark = await _get_sync_watermark(hub_pool, "hub_player_rating_history")
+async def sync_rating_history(pg_pool: asyncpg.Pool, hub_pool: asyncpg.Pool, *, force_full: bool = False) -> SyncResult:
+    watermark = await _resolve_watermark(hub_pool, "hub_player_rating_history", force_full=force_full)
     params: list[Any] = []
     where_sql = ""
     if watermark is not None:
@@ -857,7 +904,7 @@ async def sync_rating_history(pg_pool: asyncpg.Pool, hub_pool: asyncpg.Pool) -> 
     )
 
 
-async def sync_tournaments(pg_pool: asyncpg.Pool, hub_pool: asyncpg.Pool) -> list[SyncResult]:
+async def sync_tournaments(pg_pool: asyncpg.Pool, hub_pool: asyncpg.Pool, *, force_full: bool = False) -> list[SyncResult]:
     tournaments = _rows_as_dicts(await pg_pool.fetch(
         """
         SELECT
@@ -993,7 +1040,7 @@ async def sync_tournaments(pg_pool: asyncpg.Pool, hub_pool: asyncpg.Pool) -> lis
     ]
 
 
-async def sync_all(pg_pool: asyncpg.Pool, hub_pool: asyncpg.Pool) -> list[SyncResult]:
+async def sync_all(pg_pool: asyncpg.Pool, hub_pool: asyncpg.Pool, *, force_full: bool = False) -> list[SyncResult]:
     results: list[SyncResult] = []
     try:
         for syncer in (
@@ -1005,7 +1052,7 @@ async def sync_all(pg_pool: asyncpg.Pool, hub_pool: asyncpg.Pool) -> list[SyncRe
             sync_match_events,
             sync_rating_history,
         ):
-            result = await syncer(pg_pool, hub_pool)
+            result = await syncer(pg_pool, hub_pool, force_full=force_full)
             results.append(result)
             await _mark_sync_state(
                 hub_pool,
@@ -1015,7 +1062,7 @@ async def sync_all(pg_pool: asyncpg.Pool, hub_pool: asyncpg.Pool) -> list[SyncRe
                 source_updated_at=result.max_source_updated_at,
             )
 
-        for result in await sync_tournaments(pg_pool, hub_pool):
+        for result in await sync_tournaments(pg_pool, hub_pool, force_full=force_full):
             results.append(result)
             await _mark_sync_state(
                 hub_pool,

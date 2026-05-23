@@ -413,6 +413,27 @@ async def fetch_one(
         raise HTTPException(status_code=504, detail="Hub database query timed out") from exc
 
 
+async def fetch_cached_payload(
+    request: Request,
+    namespace: str,
+    cache_token: str,
+    loader,
+    *,
+    ttl: int,
+):
+    redis_client = getattr(request.app.state, "redis", None)
+    cache_key = f"{config.REDIS_KEY_PREFIX}:{namespace}:{cache_token}"
+    if ttl > 0:
+        cached = await cache.get_json(redis_client, cache_key)
+        if cached is not None:
+            return cached
+
+    value = await loader()
+    if ttl > 0:
+        await cache.set_json(redis_client, cache_key, value, ttl)
+    return value
+
+
 @app.get("/health")
 async def health(request: Request):
     try:
@@ -783,6 +804,95 @@ async def hub_summary(request: Request):
         (),
         cache_ttl=config.SUMMARY_CACHE_TTL_SECONDS,
         cache_namespace="summary",
+    )
+
+
+@app.get("/api/bootstrap")
+async def hub_bootstrap(request: Request):
+    player_select_from = build_player_select_from(
+        getattr(request.app.state, "hub_match_player_stats_columns", set()),
+    )
+
+    async def load_payload():
+        teams_task = fetch_all(
+            request,
+            """
+            SELECT *
+            FROM v_hub_team_profile_summary
+            ORDER BY average_rating DESC, name ASC
+            """,
+            (),
+            cache_ttl=0,
+        )
+        players_task = fetch_all(
+            request,
+            f"""
+            SELECT {PLAYER_SELECT_FIELDS}
+            {player_select_from}
+            ORDER BY p.rating DESC, p.display_name ASC
+            """,
+            (),
+            cache_ttl=0,
+        )
+        matches_task = fetch_all(
+            request,
+            f"""
+            SELECT {MATCH_SELECT_FIELDS}
+            {MATCH_SELECT_FROM}
+            ORDER BY m.match_datetime DESC
+            LIMIT 5000
+            """,
+            (),
+            cache_ttl=0,
+        )
+        tournaments_task = fetch_all(
+            request,
+            """
+            SELECT *
+            FROM hub_tournaments
+            ORDER BY created_at DESC
+            """,
+            (),
+            cache_ttl=0,
+        )
+        media_task = fetch_all(
+            request,
+            """
+            SELECT *
+            FROM hub_media_assets
+            WHERE is_public = TRUE
+            ORDER BY created_at DESC
+            LIMIT 1000
+            """,
+            (),
+            cache_ttl=0,
+        )
+        summary_task = hub_summary(request)
+
+        teams, players, matches, tournaments, media, summary = await asyncio.gather(
+            teams_task,
+            players_task,
+            matches_task,
+            tournaments_task,
+            media_task,
+            summary_task,
+        )
+
+        return {
+            "teams": teams,
+            "players": players,
+            "matches": matches,
+            "tournaments": tournaments,
+            "media": media,
+            "summary": summary,
+        }
+
+    return await fetch_cached_payload(
+        request,
+        "bootstrap",
+        "all",
+        load_payload,
+        ttl=config.BOOTSTRAP_CACHE_TTL_SECONDS,
     )
 
 
