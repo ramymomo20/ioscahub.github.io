@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { AccentLink, Crest, MatchCard, Pitch, PlayerAvatar, PlayerBadge, PlayerInlineLink, Widget } from '../components/ui'
-import { getTopRatedPlayers, getTrendingPlayers, listHomeFeatures, listMatches, listPlayers, listQuickStats, listTeams } from '../data/repository'
+import { getMatchmakingLeaders, getTopRatedPlayers, getTrendingPlayers, listHomeFeatures, listMatches, listPlayers, listQuickStats, listTeams } from '../data/repository'
 
 export function HomePage() {
   const homeFeatures = listHomeFeatures()
@@ -11,6 +11,7 @@ export function HomePage() {
   const teams = listTeams()
   const topThree = getTopRatedPlayers(3)
   const trendingPlayers = getTrendingPlayers(6, 2)
+  const matchmakingLeaders = getMatchmakingLeaders()
   const featureCount = homeFeatures.length
   const [featureIndex, setFeatureIndex] = useState(0)
   const activeFeature = homeFeatures[featureIndex]
@@ -128,6 +129,14 @@ export function HomePage() {
           </div>
         </Widget>
 
+        <Widget title="Matchmaking Leaders This Month">
+          <div className="results-stack">
+            <LeaderboardMiniSection title="Goals" entries={matchmakingLeaders.scorers} />
+            <LeaderboardMiniSection title="Assists" entries={matchmakingLeaders.assisters} />
+            <LeaderboardMiniSection title="Saves" entries={matchmakingLeaders.saves} />
+          </div>
+        </Widget>
+
         <Widget title="Latest Results Feed" className="span-two">
           <div className="results-stack">
             {matches.slice(0, 3).map((match) => (
@@ -204,6 +213,23 @@ function buildTeamOfWeekLineup(players, matches) {
       badges: buildTeamOfWeekBadges(player),
     }
   })
+}
+
+function LeaderboardMiniSection({ title, entries }) {
+  return (
+    <div className="top-three-list">
+      <strong>{title}</strong>
+      {entries.length ? entries.map((entry, index) => (
+        <div key={`${title}-${entry.playerId}-${index}`} className="top-three-item place-1">
+          <div className="top-three-left">
+            <span className="top-three-rank">{index + 1}.</span>
+            <PlayerInlineLink playerId={entry.playerId} />
+          </div>
+          <strong>{entry.value}</strong>
+        </div>
+      )) : <p>No data yet.</p>}
+    </div>
+  )
 }
 
 function buildTeamOfWeekBadges(player) {

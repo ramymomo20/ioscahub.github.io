@@ -174,6 +174,34 @@ CURRENT_PLAYER_TEAM_SUBQUERY = """
     WHERE latest.row_num = 1
 """
 
+PLAYER_DETAILED_POSITION_SUBQUERY = """
+    SELECT
+        ranked.steam_id,
+        ranked.position_code AS primary_position
+    FROM (
+        SELECT
+            aggregated.steam_id,
+            aggregated.position_code,
+            ROW_NUMBER() OVER (
+                PARTITION BY aggregated.steam_id
+                ORDER BY aggregated.appearances_at_position DESC, aggregated.last_used_at DESC, aggregated.position_code ASC
+            ) AS row_num
+        FROM (
+            SELECT
+                pmd.steam_id,
+                UPPER(TRIM(pmd.position_code)) AS position_code,
+                COUNT(*) AS appearances_at_position,
+                MAX(COALESCE(pmd.source_updated_at, m.source_updated_at, m.match_datetime)) AS last_used_at
+            FROM hub_match_player_stats pmd
+            LEFT JOIN hub_matches m ON m.match_stats_id = pmd.match_stats_id
+            WHERE pmd.position_code IS NOT NULL
+              AND TRIM(pmd.position_code) <> ''
+            GROUP BY pmd.steam_id, UPPER(TRIM(pmd.position_code))
+        ) aggregated
+    ) ranked
+    WHERE ranked.row_num = 1
+"""
+
 PLAYER_SELECT_FIELDS = """
     p.steam_id,
     p.discord_id,
@@ -194,7 +222,7 @@ PLAYER_SELECT_FIELDS = """
             LIMIT 1
         )
     ) AS avatar_url,
-    p.primary_position,
+    COALESCE(position_history.primary_position, p.primary_position) AS primary_position,
     p.rating,
     p.atk_rating,
     p.mid_rating,
@@ -258,6 +286,7 @@ def build_player_select_from(existing_columns: set[str] | None = None) -> str:
     FROM hub_players p
     LEFT JOIN ({build_player_stats_subquery(existing_columns)}) stats ON stats.steam_id = p.steam_id
     LEFT JOIN ({CURRENT_PLAYER_TEAM_SUBQUERY}) current_team ON current_team.steam_id = p.steam_id
+    LEFT JOIN ({PLAYER_DETAILED_POSITION_SUBQUERY}) position_history ON position_history.steam_id = p.steam_id
 """
 
 MATCH_SELECT_FIELDS = """
@@ -521,11 +550,100 @@ async def get_player(request: Request, steam_id: str):
         ) overview ON overview.match_stats_id = pmd.match_stats_id
         WHERE pmd.steam_id = %s
         ORDER BY overview.match_datetime DESC
-        LIMIT 20
+        LIMIT 500
         """,
         (steam_id,),
     )
     return player
+
+
+async def _load_matchmaking_monthly_leaders(
+    request: Request,
+    *,
+    window_days: int = 30,
+    limit: int = 5,
+) -> dict[str, list[dict[str, Any]]]:
+    params = (window_days, limit)
+    scorers = await fetch_all(
+        request,
+        """
+        SELECT
+            pmd.steam_id,
+            COUNT(DISTINCT pmd.match_stats_id) AS appearances,
+            COALESCE(SUM(pmd.goals), 0) AS value
+        FROM hub_match_player_stats pmd
+        JOIN hub_matches m ON m.match_stats_id = pmd.match_stats_id
+        LEFT JOIN hub_tournament_fixtures fixture ON fixture.played_match_stats_id = m.match_stats_id
+        WHERE m.match_datetime >= NOW() - (%s::int * INTERVAL '1 day')
+          AND fixture.played_match_stats_id IS NULL
+        GROUP BY pmd.steam_id
+        HAVING COALESCE(SUM(pmd.goals), 0) > 0
+        ORDER BY value DESC, appearances DESC, pmd.steam_id ASC
+        LIMIT %s
+        """,
+        params,
+        cache_ttl=0,
+    )
+    assisters = await fetch_all(
+        request,
+        """
+        SELECT
+            pmd.steam_id,
+            COUNT(DISTINCT pmd.match_stats_id) AS appearances,
+            COALESCE(SUM(pmd.assists), 0) AS value
+        FROM hub_match_player_stats pmd
+        JOIN hub_matches m ON m.match_stats_id = pmd.match_stats_id
+        LEFT JOIN hub_tournament_fixtures fixture ON fixture.played_match_stats_id = m.match_stats_id
+        WHERE m.match_datetime >= NOW() - (%s::int * INTERVAL '1 day')
+          AND fixture.played_match_stats_id IS NULL
+        GROUP BY pmd.steam_id
+        HAVING COALESCE(SUM(pmd.assists), 0) > 0
+        ORDER BY value DESC, appearances DESC, pmd.steam_id ASC
+        LIMIT %s
+        """,
+        params,
+        cache_ttl=0,
+    )
+    saves = await fetch_all(
+        request,
+        """
+        SELECT
+            pmd.steam_id,
+            COUNT(DISTINCT pmd.match_stats_id) AS appearances,
+            COALESCE(SUM(pmd.keeper_saves), 0) AS value
+        FROM hub_match_player_stats pmd
+        JOIN hub_matches m ON m.match_stats_id = pmd.match_stats_id
+        LEFT JOIN hub_tournament_fixtures fixture ON fixture.played_match_stats_id = m.match_stats_id
+        WHERE m.match_datetime >= NOW() - (%s::int * INTERVAL '1 day')
+          AND fixture.played_match_stats_id IS NULL
+        GROUP BY pmd.steam_id
+        HAVING COALESCE(SUM(pmd.keeper_saves), 0) > 0
+        ORDER BY value DESC, appearances DESC, pmd.steam_id ASC
+        LIMIT %s
+        """,
+        params,
+        cache_ttl=0,
+    )
+    return {
+        "scorers": scorers,
+        "assisters": assisters,
+        "saves": saves,
+    }
+
+
+@app.get("/api/matchmaking/leaders")
+async def matchmaking_leaders(
+    request: Request,
+    window_days: int = Query(30, ge=7, le=90),
+    limit: int = Query(5, ge=1, le=20),
+):
+    return await fetch_cached_payload(
+        request,
+        "matchmaking-leaders",
+        f"{window_days}:{limit}",
+        lambda: _load_matchmaking_monthly_leaders(request, window_days=window_days, limit=limit),
+        ttl=config.SUMMARY_CACHE_TTL_SECONDS,
+    )
 
 
 @app.get("/api/teams")
@@ -868,14 +986,16 @@ async def hub_bootstrap(request: Request):
             cache_ttl=0,
         )
         summary_task = hub_summary(request)
+        matchmaking_leaders_task = _load_matchmaking_monthly_leaders(request)
 
-        teams, players, matches, tournaments, media, summary = await asyncio.gather(
+        teams, players, matches, tournaments, media, summary, matchmaking_leaders = await asyncio.gather(
             teams_task,
             players_task,
             matches_task,
             tournaments_task,
             media_task,
             summary_task,
+            matchmaking_leaders_task,
         )
 
         return {
@@ -885,6 +1005,7 @@ async def hub_bootstrap(request: Request):
             "tournaments": tournaments,
             "media": media,
             "summary": summary,
+            "matchmaking_leaders": matchmaking_leaders,
         }
 
     return await fetch_cached_payload(

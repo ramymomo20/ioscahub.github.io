@@ -39,8 +39,8 @@ export function RankingsPage() {
 
     if (category === 'attackers') return sorted.filter((player) => ['LW', 'RW', 'CF'].includes(player.position)).sort((a, b) => b.rating - a.rating)
     if (category === 'midfielders') return sorted.filter((player) => ['CM', 'LM', 'RM'].includes(player.position)).sort((a, b) => b.rating - a.rating)
-    if (category === 'defenders') return sorted.filter((player) => ['LB', 'CB', 'RB'].includes(player.position)).sort((a, b) => b.stats.interceptions - a.stats.interceptions)
-    if (category === 'goalkeepers') return sorted.filter((player) => player.position === 'GK').sort((a, b) => b.stats.saves - a.stats.saves)
+    if (category === 'defenders') return sorted.filter((player) => ['LB', 'CB', 'RB'].includes(player.position)).sort((a, b) => b.rating - a.rating || b.stats.interceptions - a.stats.interceptions)
+    if (category === 'goalkeepers') return sorted.filter((player) => player.position === 'GK').sort((a, b) => b.rating - a.rating || b.stats.saves - a.stats.saves)
     if (category === 'passers') return sorted.sort((a, b) => b.stats.passAccuracy - a.stats.passAccuracy)
     if (category === 'goals') return sorted.sort((a, b) => b.stats.goals - a.stats.goals)
     if (category === 'interceptions') return sorted.sort((a, b) => b.stats.interceptions - a.stats.interceptions)

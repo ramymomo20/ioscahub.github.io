@@ -40,6 +40,11 @@ function buildInitialState() {
     tournaments: [],
     media: [],
     summary: null,
+    matchmakingLeaders: {
+      scorers: [],
+      assisters: [],
+      saves: [],
+    },
     records: [],
     quickStats: [],
     homeFeatures: [],
@@ -352,6 +357,7 @@ async function ensureBootstrapLoaded() {
           tournaments: Array.isArray(bootstrapResult.tournaments) ? bootstrapResult.tournaments.map(mapTournamentSummary) : [],
           media: Array.isArray(bootstrapResult.media) ? bootstrapResult.media.map(mapMediaItem) : [],
           summary: bootstrapResult.summary ?? null,
+          matchmakingLeaders: mapMatchmakingLeaders(bootstrapResult.matchmaking_leaders),
         })
 
         setState(mappedState)
@@ -394,6 +400,7 @@ async function ensureBootstrapLoaded() {
         tournaments: rawTournaments.map(mapTournamentSummary),
         media: rawMedia.map(mapMediaItem),
         summary: rawSummary,
+        matchmakingLeaders: { scorers: [], assisters: [], saves: [] },
       })
 
       setState(mappedState)
@@ -765,6 +772,7 @@ export const listHomeFeatures = () => state.homeFeatures
 export const listQuickStats = () => state.quickStats
 export const listPositionOptions = () => positionOptions
 export const getDiscordOverview = () => state.discordOverview
+export const getMatchmakingLeaders = () => state.matchmakingLeaders
 
 export function listPlayerMatchLogs(playerId) {
   const player = getPlayerById(playerId)
@@ -859,7 +867,7 @@ function mapPlayerSummary(raw) {
 
   return {
     id: String(raw.steam_id),
-    discordId: raw.discord_id != null ? String(raw.discord_id) : null,
+    discordId: normalizeRegisteredDiscordId(raw.discord_id),
     name: playerName,
     teamId: raw.current_team_guild_id ? String(raw.current_team_guild_id) : null,
     teamName: raw.current_team_name ?? null,
@@ -1089,6 +1097,22 @@ function mapMediaItem(raw) {
     accent: mediaAccentForGroup(group),
     uploader: 'Community',
     assetUrl: raw.public_url ?? '#',
+  }
+}
+
+function mapMatchmakingLeaders(raw) {
+  return {
+    scorers: Array.isArray(raw?.scorers) ? raw.scorers.map(mapLeaderboardEntry) : [],
+    assisters: Array.isArray(raw?.assisters) ? raw.assisters.map(mapLeaderboardEntry) : [],
+    saves: Array.isArray(raw?.saves) ? raw.saves.map(mapLeaderboardEntry) : [],
+  }
+}
+
+function mapLeaderboardEntry(raw) {
+  return {
+    playerId: raw?.steam_id != null ? String(raw.steam_id) : null,
+    value: toNumber(raw?.value),
+    appearances: toNumber(raw?.appearances),
   }
 }
 
@@ -1722,6 +1746,9 @@ function buildRecords(players, teams) {
   const topAssists = players.slice().sort((left, right) => right.stats.assists - left.stats.assists)[0]
   const topInterceptions = players.slice().sort((left, right) => right.stats.interceptions - left.stats.interceptions)[0]
   const topSaves = players.filter((player) => player.position === 'GK').sort((left, right) => right.stats.saves - left.stats.saves)[0]
+  const topPasses = players.slice().sort((left, right) => right.stats.apasses - left.stats.apasses)[0]
+  const topSecondAssists = players.slice().sort((left, right) => right.stats.secondAssists - left.stats.secondAssists)[0]
+  const topRedCards = players.slice().sort((left, right) => right.stats.redCards - left.stats.redCards)[0]
   const topPlayer = players.slice().sort((left, right) => right.rating - left.rating)[0]
   const topTeam = teams.slice().sort(compareTeamsForRanking)[0]
 
@@ -1729,6 +1756,9 @@ function buildRecords(players, teams) {
   if (topAssists) records.push({ label: 'Most Assists', holder: topAssists.name, value: topAssists.stats.assists, context: 'Across synced official hub matches' })
   if (topInterceptions) records.push({ label: 'Most Interceptions', holder: topInterceptions.name, value: topInterceptions.stats.interceptions, context: 'Across synced official hub matches' })
   if (topSaves) records.push({ label: 'Most Saves', holder: topSaves.name, value: topSaves.stats.saves, context: 'Across synced official hub matches' })
+  if (topPasses) records.push({ label: 'Most Passes', holder: topPasses.name, value: topPasses.stats.apasses, context: 'Across synced official hub matches' })
+  if (topSecondAssists) records.push({ label: 'Most 2nd Assists', holder: topSecondAssists.name, value: topSecondAssists.stats.secondAssists, context: 'Across synced official hub matches' })
+  if (topRedCards) records.push({ label: 'Most Red Cards', holder: topRedCards.name, value: topRedCards.stats.redCards, context: 'Across synced official hub matches' })
   if (topPlayer) records.push({ label: 'Highest Rated Player', holder: topPlayer.name, value: topPlayer.rating, context: topPlayer.teamId ? (teamNameById.get(topPlayer.teamId) ?? topPlayer.teamId) : 'Active hub player' })
   if (topTeam) records.push({ label: 'Highest Rated Team', holder: topTeam.name, value: topTeam.avgRating.toFixed(1), context: `${topTeam.wins} wins | ${topTeam.draws} draws | ${topTeam.losses} losses` })
 
@@ -1843,12 +1873,18 @@ function buildPlayerRecords(matchLogs) {
 
   const topGoals = performances.slice().sort((left, right) => right.performance.goals - left.performance.goals)[0]
   const topAssists = performances.slice().sort((left, right) => right.performance.assists - left.performance.assists)[0]
+  const topSecondAssists = performances.slice().sort((left, right) => right.performance.secondAssists - left.performance.secondAssists)[0]
+  const topPasses = performances.slice().sort((left, right) => right.performance.passes - left.performance.passes)[0]
+  const topRedCards = performances.slice().sort((left, right) => right.performance.redCards - left.performance.redCards)[0]
   const topRating = performances.slice().sort((left, right) => right.performance.rating - left.performance.rating)[0]
   const lowRating = performances.slice().sort((left, right) => left.performance.rating - right.performance.rating)[0]
 
   return [
     topGoals ? { label: 'Most goals in a match', value: String(topGoals.performance.goals), matchId: topGoals.matchId, summary: topGoals.summary } : null,
     topAssists ? { label: 'Most assists in a match', value: String(topAssists.performance.assists), matchId: topAssists.matchId, summary: topAssists.summary } : null,
+    topSecondAssists ? { label: 'Most 2nd assists in a match', value: String(topSecondAssists.performance.secondAssists), matchId: topSecondAssists.matchId, summary: topSecondAssists.summary } : null,
+    topPasses ? { label: 'Most passes in a match', value: String(topPasses.performance.passes), matchId: topPasses.matchId, summary: topPasses.summary } : null,
+    topRedCards ? { label: 'Most red cards in a match', value: String(topRedCards.performance.redCards), matchId: topRedCards.matchId, summary: topRedCards.summary } : null,
     topRating ? { label: 'Highest match rating', value: String(topRating.performance.rating), matchId: topRating.matchId, summary: topRating.summary } : null,
     lowRating ? { label: 'Lowest match rating', value: String(lowRating.performance.rating), matchId: lowRating.matchId, summary: lowRating.summary } : null,
   ].filter(Boolean)
@@ -1994,6 +2030,20 @@ function normalizePosition(position, rawPlayer = null) {
   }
 
   return 'CM'
+}
+
+function normalizeRegisteredDiscordId(value) {
+  const text = String(value ?? '').trim()
+  if (!text || text.startsWith('unregistered:')) {
+    return null
+  }
+
+  const numeric = Number(text)
+  if (Number.isFinite(numeric) && numeric <= 0) {
+    return null
+  }
+
+  return text
 }
 
 function normalizeSide(value, fallback = null) {

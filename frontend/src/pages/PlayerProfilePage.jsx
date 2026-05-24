@@ -223,6 +223,29 @@ export function PlayerProfilePage() {
   )
 }
 
+function steamAccountIdToSteam64(accountId) {
+  const base = 76561197960265728n
+  return String(base + BigInt(accountId))
+}
+
+function legacySteamIdToSteam64(value) {
+  const match = String(value ?? '').trim().match(/^STEAM_[0-5]:([01]):(\d+)$/i)
+  if (!match) {
+    return null
+  }
+  const y = BigInt(match[1])
+  const z = BigInt(match[2])
+  return steamAccountIdToSteam64((z * 2n) + y)
+}
+
+function steamId3ToSteam64(value) {
+  const match = String(value ?? '').trim().match(/^\[U:1:(\d+)\]$/i)
+  if (!match) {
+    return null
+  }
+  return steamAccountIdToSteam64(match[1])
+}
+
 function getSteamProfileUrl(value) {
   const text = String(value ?? '').trim()
   if (!text) {
@@ -231,6 +254,15 @@ function getSteamProfileUrl(value) {
   if (/^\d{17,20}$/.test(text)) {
     return `https://steamcommunity.com/profiles/${text}`
   }
+
+  const steam64 =
+    legacySteamIdToSteam64(text)
+    || steamId3ToSteam64(text)
+
+  if (steam64) {
+    return `https://steamcommunity.com/profiles/${steam64}`
+  }
+
   return `https://steamcommunity.com/id/${encodeURIComponent(text)}`
 }
 
