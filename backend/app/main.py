@@ -463,6 +463,23 @@ async def fetch_cached_payload(
     return value
 
 
+async def _get_latest_hub_sync_token(request: Request) -> str:
+    row = await fetch_one(
+        request,
+        """
+        SELECT
+            COALESCE(MAX(last_synced_at), MAX(updated_at)) AS sync_token
+        FROM hub_sync_state
+        WHERE sync_key = 'full_sync'
+        """,
+        (),
+        cache_ttl=0,
+        cache_namespace="sync-token",
+    )
+    token = row.get("sync_token") if isinstance(row, dict) else None
+    return str(token) if token is not None else "no-sync"
+
+
 @app.get("/health")
 async def health(request: Request):
     try:
@@ -930,6 +947,7 @@ async def hub_bootstrap(request: Request):
     player_select_from = build_player_select_from(
         getattr(request.app.state, "hub_match_player_stats_columns", set()),
     )
+    cache_token = await _get_latest_hub_sync_token(request)
 
     async def load_payload():
         teams_task = fetch_all(
@@ -1011,7 +1029,7 @@ async def hub_bootstrap(request: Request):
     return await fetch_cached_payload(
         request,
         "bootstrap",
-        "all",
+        cache_token,
         load_payload,
         ttl=config.BOOTSTRAP_CACHE_TTL_SECONDS,
     )

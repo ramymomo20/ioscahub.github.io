@@ -7,6 +7,7 @@ const DEFAULT_PAGE_SIZE = 200
 const TEAM_PAGE_SIZE = 250
 const MAX_PAGINATION_PAGES = 50
 const API_RESPONSE_CACHE_TTL_MS = 2 * 60 * 1000
+const BOOTSTRAP_REFRESH_INTERVAL_MS = 90 * 1000
 const API_RESPONSE_CACHE_PREFIX = 'iosca-hub-response:v2:'
 
 let bootstrapPromise = null
@@ -22,6 +23,7 @@ function buildInitialState() {
   return {
     bootstrapStatus: 'idle',
     bootstrapError: null,
+    bootstrapLoadedAt: 0,
     detailStatus: {
       players: {},
       matches: {},
@@ -166,10 +168,28 @@ function writeCachedApiResponse(path, data) {
   }
 }
 
-async function fetchJson(path) {
-  const cached = readCachedApiResponse(path)
-  if (cached !== null) {
-    return cached
+function clearCachedApiResponse(path) {
+  const storage = getStorage()
+  if (!storage) {
+    return
+  }
+
+  try {
+    storage.removeItem(getApiCacheKey(path))
+  } catch {
+    // Ignore storage access failures.
+  }
+}
+
+async function fetchJson(path, options = {}) {
+  const { bypassCache = false } = options
+  if (!bypassCache) {
+    const cached = readCachedApiResponse(path)
+    if (cached !== null) {
+      return cached
+    }
+  } else {
+    clearCachedApiResponse(path)
   }
 
   if (apiRequestPromises.has(path)) {
@@ -329,8 +349,13 @@ function applyDerivedState(baseState) {
   }
 }
 
-async function ensureBootstrapLoaded() {
-  if (state.bootstrapStatus === 'loaded') {
+function isBootstrapStale() {
+  return !state.bootstrapLoadedAt || (Date.now() - state.bootstrapLoadedAt) >= BOOTSTRAP_REFRESH_INTERVAL_MS
+}
+
+async function ensureBootstrapLoaded(options = {}) {
+  const { force = false } = options
+  if (state.bootstrapStatus === 'loaded' && !force && !isBootstrapStale()) {
     return state
   }
 
@@ -344,13 +369,14 @@ async function ensureBootstrapLoaded() {
     bootstrapError: null,
   }))
 
-  bootstrapPromise = settleTask(fetchJson('/api/bootstrap'), null)
+  bootstrapPromise = settleTask(fetchJson('/api/bootstrap', { bypassCache: force }), null)
     .then(async (bootstrapResult) => {
       if (bootstrapResult && !bootstrapResult.__hubFetchError && typeof bootstrapResult === 'object') {
         const mappedState = applyDerivedState({
           ...state,
           bootstrapStatus: 'loaded',
           bootstrapError: null,
+          bootstrapLoadedAt: Date.now(),
           teams: Array.isArray(bootstrapResult.teams) ? bootstrapResult.teams.map(mapTeamSummary) : [],
           players: Array.isArray(bootstrapResult.players) ? bootstrapResult.players.map(mapPlayerSummary) : [],
           matches: Array.isArray(bootstrapResult.matches) ? bootstrapResult.matches.map(mapMatchSummary) : [],
@@ -365,12 +391,12 @@ async function ensureBootstrapLoaded() {
       }
 
       return Promise.all([
-        settleTask(fetchJson(withPagination('/api/teams', TEAM_PAGE_SIZE, 0))),
+        settleTask(fetchJson(withPagination('/api/teams', TEAM_PAGE_SIZE, 0), { bypassCache: force })),
         settleTask(fetchAllPages('/api/players', DEFAULT_PAGE_SIZE)),
         settleTask(fetchAllPages('/api/matches', DEFAULT_PAGE_SIZE)),
-        settleTask(fetchJson(withPagination('/api/tournaments', 100, 0))),
+        settleTask(fetchJson(withPagination('/api/tournaments', 100, 0), { bypassCache: force })),
         fetchAllPagesOrDefault('/api/media', [], DEFAULT_PAGE_SIZE),
-        settleTask(fetchJson('/api/summary'), null),
+        settleTask(fetchJson('/api/summary', { bypassCache: force }), null),
       ])
     })
     .then((bootstrapOrLegacy) => {
@@ -394,6 +420,7 @@ async function ensureBootstrapLoaded() {
         ...state,
         bootstrapStatus: 'loaded',
         bootstrapError: null,
+        bootstrapLoadedAt: Date.now(),
         teams: rawTeams.map(mapTeamSummary),
         players: rawPlayers.map(mapPlayerSummary),
         matches: rawMatches.map(mapMatchSummary),
@@ -653,6 +680,18 @@ export function useHubData() {
     if (snapshot.bootstrapStatus === 'idle') {
       void ensureBootstrapLoaded()
     }
+  }, [snapshot.bootstrapStatus])
+
+  useEffect(() => {
+    if (snapshot.bootstrapStatus !== 'loaded') {
+      return undefined
+    }
+
+    const intervalId = window.setInterval(() => {
+      void ensureBootstrapLoaded({ force: true })
+    }, BOOTSTRAP_REFRESH_INTERVAL_MS)
+
+    return () => window.clearInterval(intervalId)
   }, [snapshot.bootstrapStatus])
 
   return {
