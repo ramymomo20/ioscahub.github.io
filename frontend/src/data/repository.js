@@ -7,7 +7,7 @@ const DEFAULT_PAGE_SIZE = 200
 const TEAM_PAGE_SIZE = 250
 const MAX_PAGINATION_PAGES = 50
 const API_RESPONSE_CACHE_TTL_MS = 2 * 60 * 1000
-const BOOTSTRAP_REFRESH_INTERVAL_MS = 90 * 1000
+const BOOTSTRAP_REFRESH_INTERVAL_MS = 30 * 1000
 const API_RESPONSE_CACHE_PREFIX = 'iosca-hub-response:v2:'
 
 let bootstrapPromise = null
@@ -121,7 +121,23 @@ function getApiCacheKey(path) {
   return `${API_RESPONSE_CACHE_PREFIX}${path}`
 }
 
+function shouldBypassClientCache(path) {
+  const normalizedPath = String(path ?? '').split('?')[0]
+  return (
+    normalizedPath === '/api/bootstrap'
+    || normalizedPath === '/api/summary'
+    || normalizedPath === '/api/matchmaking/leaders'
+    || normalizedPath.startsWith('/api/players')
+    || normalizedPath.startsWith('/api/teams')
+    || normalizedPath.startsWith('/api/matches')
+    || normalizedPath.startsWith('/api/tournaments')
+  )
+}
+
 function readCachedApiResponse(path) {
+  if (shouldBypassClientCache(path)) {
+    return null
+  }
   const storage = getStorage()
   if (!storage) {
     return null
@@ -150,6 +166,9 @@ function readCachedApiResponse(path) {
 }
 
 function writeCachedApiResponse(path, data) {
+  if (shouldBypassClientCache(path)) {
+    return
+  }
   const storage = getStorage()
   if (!storage) {
     return
@@ -169,6 +188,9 @@ function writeCachedApiResponse(path, data) {
 }
 
 function clearCachedApiResponse(path) {
+  if (shouldBypassClientCache(path)) {
+    return
+  }
   const storage = getStorage()
   if (!storage) {
     return
@@ -363,11 +385,13 @@ async function ensureBootstrapLoaded(options = {}) {
     return bootstrapPromise
   }
 
-  setState((current) => ({
-    ...current,
-    bootstrapStatus: 'loading',
-    bootstrapError: null,
-  }))
+  if (!(force && state.bootstrapStatus === 'loaded')) {
+    setState((current) => ({
+      ...current,
+      bootstrapStatus: 'loading',
+      bootstrapError: null,
+    }))
+  }
 
   bootstrapPromise = settleTask(fetchJson('/api/bootstrap', { bypassCache: force }), null)
     .then(async (bootstrapResult) => {
@@ -436,7 +460,7 @@ async function ensureBootstrapLoaded(options = {}) {
     .catch((error) => {
       setState((current) => ({
         ...current,
-        bootstrapStatus: 'error',
+        bootstrapStatus: force && current.bootstrapStatus === 'loaded' ? 'loaded' : 'error',
         bootstrapError: error instanceof Error ? error.message : 'Failed to load hub data.',
       }))
       throw error
@@ -2137,12 +2161,12 @@ function toTeamPerspectiveCoordinates(event) {
 
   const firstHalf = isFirstHalfPeriod(event.period, event.matchSecond)
   const attackDepth = event.side === 'home'
-    ? (firstHalf ? 1 - event.normY : event.normY)
-    : (firstHalf ? event.normY : 1 - event.normY)
+    ? (firstHalf ? 1 - event.normX : event.normX)
+    : (firstHalf ? event.normX : 1 - event.normX)
 
   return {
     attackDepth: Math.max(0, Math.min(1, attackDepth)),
-    lateral: Math.max(0, Math.min(1, event.normX)),
+    lateral: Math.max(0, Math.min(1, event.normY)),
   }
 }
 

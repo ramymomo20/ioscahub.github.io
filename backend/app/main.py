@@ -4,8 +4,10 @@ import asyncio
 import hashlib
 import json
 from contextlib import asynccontextmanager
+from datetime import datetime
 import re
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -480,6 +482,29 @@ async def _get_latest_hub_sync_token(request: Request) -> str:
     return str(token) if token is not None else "no-sync"
 
 
+def _parse_public_datetime(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return value
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
+def _is_historical_match(value: Any) -> bool:
+    match_dt = _parse_public_datetime(value)
+    if match_dt is None:
+        return False
+
+    now_local = datetime.now(ZoneInfo(config.HUB_LIVE_DATA_TIMEZONE))
+    if match_dt.tzinfo is None:
+        return match_dt.date() < now_local.date()
+    return match_dt.astimezone(ZoneInfo(config.HUB_LIVE_DATA_TIMEZONE)).date() < now_local.date()
+
+
 @app.get("/health")
 async def health(request: Request):
     try:
@@ -520,6 +545,7 @@ async def list_players(
         LIMIT %s OFFSET %s
         """,
         tuple(params),
+        cache_ttl=0,
     )
 
 
@@ -536,6 +562,7 @@ async def get_player(request: Request, steam_id: str):
         WHERE p.steam_id = %s
         """,
         (steam_id,),
+        cache_ttl=0,
     )
     if not player:
         raise HTTPException(status_code=404, detail="Player not found")
@@ -570,6 +597,7 @@ async def get_player(request: Request, steam_id: str):
         LIMIT 500
         """,
         (steam_id,),
+        cache_ttl=0,
     )
     return player
 
@@ -659,7 +687,7 @@ async def matchmaking_leaders(
         "matchmaking-leaders",
         f"{window_days}:{limit}",
         lambda: _load_matchmaking_monthly_leaders(request, window_days=window_days, limit=limit),
-        ttl=config.SUMMARY_CACHE_TTL_SECONDS,
+        ttl=0,
     )
 
 
@@ -674,6 +702,7 @@ async def list_teams(request: Request, limit: int = Query(100, ge=1, le=250), of
         LIMIT %s OFFSET %s
         """,
         (limit, offset),
+        cache_ttl=0,
     )
 
 
@@ -682,7 +711,7 @@ async def get_team(request: Request, guild_id: str):
     player_select_from = build_player_select_from(
         getattr(request.app.state, "hub_match_player_stats_columns", set()),
     )
-    team = await fetch_one(request, "SELECT * FROM v_hub_team_profile_summary WHERE guild_id = %s", (guild_id,))
+    team = await fetch_one(request, "SELECT * FROM v_hub_team_profile_summary WHERE guild_id = %s", (guild_id,), cache_ttl=0)
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
 
@@ -696,6 +725,7 @@ async def get_team(request: Request, guild_id: str):
         LIMIT 20
         """,
         (guild_id, guild_id),
+        cache_ttl=0,
     )
     team["players"] = await fetch_all(
         request,
@@ -706,6 +736,7 @@ async def get_team(request: Request, guild_id: str):
         ORDER BY p.rating DESC, p.display_name ASC
         """,
         (guild_id,),
+        cache_ttl=0,
     )
     team["aggregate_player_stats"] = await fetch_one(
         request,
@@ -752,6 +783,7 @@ async def get_team(request: Request, guild_id: str):
         ) = %s
         """,
         (guild_id,),
+        cache_ttl=0,
     )
     return team
 
@@ -780,6 +812,7 @@ async def list_matches(
         LIMIT %s OFFSET %s
         """,
         tuple(params),
+        cache_ttl=0,
     )
 
 
@@ -793,24 +826,30 @@ async def get_match(request: Request, match_stats_id: int):
         WHERE m.match_stats_id = %s
         """,
         (match_stats_id,),
+        cache_ttl=0,
     )
     if not match:
         raise HTTPException(status_code=404, detail="Match not found")
+
+    detail_cache_ttl = config.API_CACHE_TTL_SECONDS if _is_historical_match(match.get("match_datetime")) else 0
 
     match["lineups"] = await fetch_all(
         request,
         "SELECT * FROM hub_match_lineups WHERE match_stats_id = %s ORDER BY side, slot_order, position_code",
         (match_stats_id,),
+        cache_ttl=detail_cache_ttl,
     )
     match["player_stats"] = await fetch_all(
         request,
         "SELECT * FROM hub_match_player_stats WHERE match_stats_id = %s ORDER BY team_side, position_code, player_name",
         (match_stats_id,),
+        cache_ttl=detail_cache_ttl,
     )
     match["events"] = await fetch_all(
         request,
         "SELECT * FROM hub_match_events WHERE match_stats_id = %s ORDER BY match_second, event_index",
         (match_stats_id,),
+        cache_ttl=detail_cache_ttl,
     )
     return match
 
@@ -826,12 +865,13 @@ async def list_tournaments(request: Request, limit: int = Query(50, ge=1, le=100
         LIMIT %s OFFSET %s
         """,
         (limit, offset),
+        cache_ttl=0,
     )
 
 
 @app.get("/api/tournaments/{tournament_id}")
 async def get_tournament(request: Request, tournament_id: int):
-    tournament = await fetch_one(request, "SELECT * FROM hub_tournaments WHERE tournament_id = %s", (tournament_id,))
+    tournament = await fetch_one(request, "SELECT * FROM hub_tournaments WHERE tournament_id = %s", (tournament_id,), cache_ttl=0)
     if not tournament:
         raise HTTPException(status_code=404, detail="Tournament not found")
 
@@ -839,11 +879,13 @@ async def get_tournament(request: Request, tournament_id: int):
         request,
         "SELECT * FROM hub_tournament_teams WHERE tournament_id = %s ORDER BY league_key, seed, team_name",
         (tournament_id,),
+        cache_ttl=0,
     )
     tournament["standings"] = await fetch_all(
         request,
         "SELECT * FROM v_hub_tournament_standings_enriched WHERE tournament_id = %s ORDER BY points DESC, goal_diff DESC, goals_for DESC, team_name ASC",
         (tournament_id,),
+        cache_ttl=0,
     )
     tournament["fixtures"] = await fetch_all(
         request,
@@ -874,6 +916,7 @@ async def get_tournament(request: Request, tournament_id: int):
         ORDER BY fixture.league_key, fixture.week_number, fixture.fixture_id
         """,
         (tournament_id,),
+        cache_ttl=0,
     )
     return tournament
 
@@ -937,7 +980,7 @@ async def hub_summary(request: Request):
             ) AS last_full_sync_at
         """,
         (),
-        cache_ttl=config.SUMMARY_CACHE_TTL_SECONDS,
+        cache_ttl=0,
         cache_namespace="summary",
     )
 
@@ -1031,7 +1074,7 @@ async def hub_bootstrap(request: Request):
         "bootstrap",
         cache_token,
         load_payload,
-        ttl=config.BOOTSTRAP_CACHE_TTL_SECONDS,
+        ttl=0,
     )
 
 
