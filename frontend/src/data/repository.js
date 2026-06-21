@@ -1795,7 +1795,7 @@ function buildTournamentAnalytics(rawTournament, standingsGroups) {
     : []
   const leaderboards = buildTournamentLeaderboards(playerTotals)
   const performanceExtremes = mapTournamentPerformanceExtremes(rawAnalytics.performance_extremes)
-  const teamOfTheWeek = mapTournamentTeamOfTheWeek(rawAnalytics.team_of_the_week, rawTournament.format)
+  const teamOfTheWeek = mapTournamentTeamOfTheWeek(rawAnalytics.team_of_the_week)
   const standingsRows = standingsGroups.flatMap((group) => group.rows.map((row) => ({ ...row, leagueKey: group.leagueKey })))
 
   return {
@@ -1920,7 +1920,7 @@ function buildTournamentInsights(standingsRows, teamMetrics, playerTotals, perfo
   }
 }
 
-function mapTournamentTeamOfTheWeek(raw, format) {
+function mapTournamentTeamOfTheWeek(raw) {
   const candidates = Array.isArray(raw?.candidates)
     ? raw.candidates.map((entry) => ({
       playerId: entry?.player_id != null ? String(entry.player_id) : null,
@@ -1943,11 +1943,7 @@ function mapTournamentTeamOfTheWeek(raw, format) {
     return null
   }
 
-  const slotsByFormat = {
-    '5V5': ['GK', 'LB', 'RB', 'LW', 'RW'],
-    '6V6': ['GK', 'LB', 'CB', 'RB', 'LW', 'RW'],
-    '8V8': ['GK', 'LB', 'CB', 'RB', 'CM', 'LW', 'CF', 'RW'],
-  }
+  const slots = ['GK', 'LB', 'CB', 'RB', 'LW', 'RW']
   const roleGroups = {
     GK: ['GK'],
     LB: ['LB', 'CB', 'RB'],
@@ -1958,7 +1954,6 @@ function mapTournamentTeamOfTheWeek(raw, format) {
     CF: ['CF', 'CM', 'RW', 'LW'],
     RW: ['RW', 'RM', 'LW'],
   }
-  const slots = slotsByFormat[formatGameType(format)] ?? slotsByFormat['8V8']
   const used = new Set()
 
   const lineup = slots.map((slot) => {

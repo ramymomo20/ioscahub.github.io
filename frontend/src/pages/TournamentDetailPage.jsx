@@ -22,6 +22,7 @@ export function TournamentDetailPage() {
   const insights = analytics?.insights ?? {}
   const teamOfWeek = analytics?.teamOfTheWeek ?? null
   const showBracket = tournament.bracket?.some((item) => item !== 'League Table')
+  const standingsWidgetClass = tournament.standingsGroups.length > 1 ? 'tournament-span-6' : 'tournament-span-12'
 
   return (
     <div className="page-stack">
@@ -42,9 +43,9 @@ export function TournamentDetailPage() {
         <div className="intro-aside tournament-mark">{tournament.logo}</div>
       </section>
 
-      <section className="dashboard-grid">
+      <section className="dashboard-grid tournament-dashboard-grid">
         {tournament.standingsGroups.map((group) => (
-          <Widget key={group.name} title={group.name} className="span-two">
+          <Widget key={group.name} title={group.name} className={standingsWidgetClass}>
             <div className="table-shell standings-table-shell">
               <table className="standings-table">
                 <thead>
@@ -87,7 +88,7 @@ export function TournamentDetailPage() {
           </Widget>
         ))}
 
-        <Widget title="Tournament Signals">
+        <Widget title="Tournament Signals" className="tournament-span-8">
           <div className="tournament-insight-grid">
             <InsightCard
               label="Best Team So Far"
@@ -120,15 +121,7 @@ export function TournamentDetailPage() {
           </div>
         </Widget>
 
-        <Widget title="Tournament Records" className="span-two">
-          <div className="tournament-leaderboard-grid">
-            {leaderboards.map((board) => (
-              <LeaderboardBlock key={board.key} board={board} />
-            ))}
-          </div>
-        </Widget>
-
-        <Widget title="Rating Stories">
+        <Widget title="Rating Stories" className="tournament-span-4">
           <div className="tournament-insight-grid">
             <InsightCard
               label="Highest Avg Rating"
@@ -162,12 +155,12 @@ export function TournamentDetailPage() {
         </Widget>
 
         {teamOfWeek ? (
-          <Widget title={`Team of the Week | ${teamOfWeek.title}`} className="span-two">
-            <Pitch mode="match" lineups={teamOfWeek.lineup} format={tournament.gameType} />
+          <Widget title={`Team of the Week | ${teamOfWeek.title}`} className="tournament-span-8">
+            <Pitch mode="match" lineups={teamOfWeek.lineup} format="6v6" />
           </Widget>
         ) : null}
 
-        <Widget title="Fixtures" className="span-two">
+        <Widget title="Fixtures" className={teamOfWeek ? 'tournament-span-4' : 'tournament-span-12'}>
           <div className="results-stack">
             {fixturesByLeague.map((group) => (
               <div key={group.leagueKey} className="fixture-league-group">
@@ -190,8 +183,16 @@ export function TournamentDetailPage() {
           </div>
         </Widget>
 
+        <Widget title="Tournament Records" className="tournament-span-12">
+          <div className="tournament-leaderboard-grid">
+            {leaderboards.map((board) => (
+              <LeaderboardBlock key={board.key} board={board} />
+            ))}
+          </div>
+        </Widget>
+
         {showBracket ? (
-          <Widget title="Bracket">
+          <Widget title="Bracket" className="tournament-span-12">
             <div className="bracket-card">
               {(tournament.bracket ?? ['League Table']).map((item) => (
                 <span key={item}>{item}</span>

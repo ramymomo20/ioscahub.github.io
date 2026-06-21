@@ -216,6 +216,14 @@ h1, h2, h3, p, strong, span, small, a {
 .dashboard-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; }
 .span-two { grid-column: span 2; }
 .span-full { grid-column: 1 / -1; }
+.tournament-dashboard-grid {
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  align-items: start;
+}
+.tournament-span-12 { grid-column: 1 / -1; }
+.tournament-span-8 { grid-column: span 8; }
+.tournament-span-6 { grid-column: span 6; }
+.tournament-span-4 { grid-column: span 4; }
 .horizontal-rail { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(220px, 1fr); gap: 18px; overflow-x: auto; padding-bottom: 8px; }
 .player-card, .team-card, .match-card, .tournament-card, .media-card { transition: transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease; }
 .player-card:hover, .team-card:hover, .match-card:hover, .tournament-card:hover, .media-card:hover { transform: translateY(-4px); border-color: var(--line-strong); }
@@ -434,7 +442,7 @@ th { color: var(--text-faint); font-weight: 600; }
   color: var(--text-soft);
   line-height: 1.45;
 }
-.tournament-leaderboard-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.tournament-leaderboard-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
 .tournament-leaderboard-block {
   display: grid;
   gap: 12px;
@@ -541,6 +549,9 @@ th { color: var(--text-faint); font-weight: 600; }
   .hero, .page-intro, .profile-hero, .team-hero, .match-hero { grid-template-columns: 1fr; }
   .dashboard-grid, .player-grid, .team-grid, .tournament-grid, .record-grid, .media-grid, .quick-stats-grid, .feature-panel-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .span-two { grid-column: auto; }
+  .tournament-dashboard-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .tournament-span-12, .tournament-span-8, .tournament-span-6, .tournament-span-4 { grid-column: span 2; }
+  .tournament-leaderboard-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .site-footer { grid-template-columns: 1fr; }
 }
 
@@ -549,6 +560,9 @@ th { color: var(--text-faint); font-weight: 600; }
   .page-stack { gap: 24px; }
   .hero, .page-intro, .profile-hero, .team-hero, .match-hero, .widget { padding: 20px; }
   .dashboard-grid, .player-grid, .team-grid, .tournament-grid, .record-grid, .media-grid, .quick-stats-grid, .feature-panel-grid, .filter-bar { grid-template-columns: 1fr; }
+  .tournament-dashboard-grid { grid-template-columns: 1fr; }
+  .tournament-span-12, .tournament-span-8, .tournament-span-6, .tournament-span-4 { grid-column: auto; }
+  .tournament-insight-grid, .tournament-leaderboard-grid { grid-template-columns: 1fr; }
   .filter-bar { position: static; }
   .main-nav {
     width: 100%;
