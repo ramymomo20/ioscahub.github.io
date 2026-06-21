@@ -407,6 +407,71 @@ th { color: var(--text-faint); font-weight: 600; }
 .tournament-meta { display: flex; flex-wrap: wrap; gap: 10px; color: var(--text-faint); }
 .bracket-card { display: grid; gap: 14px; }
 .bracket-card span { padding: 16px; border-radius: 18px; background: rgba(255, 255, 255, 0.04); }
+.tournament-insight-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.tournament-insight-card {
+  display: grid;
+  gap: 12px;
+  min-height: 164px;
+  padding: 18px;
+  border-radius: 22px;
+  border: 1px solid rgba(152, 174, 214, 0.14);
+  background:
+    radial-gradient(circle at top right, rgba(87, 216, 255, 0.08), transparent 36%),
+    linear-gradient(180deg, rgba(18, 27, 43, 0.96), rgba(11, 18, 29, 0.98));
+}
+.tournament-insight-body { display: grid; gap: 8px; }
+.tournament-insight-fallback {
+  font-size: 1.05rem;
+  color: var(--text-soft);
+}
+.tournament-insight-value {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 1.9rem;
+  line-height: 1;
+  color: var(--gold);
+}
+.tournament-insight-card p {
+  color: var(--text-soft);
+  line-height: 1.45;
+}
+.tournament-leaderboard-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.tournament-leaderboard-block {
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+  border-radius: 22px;
+  border: 1px solid rgba(152, 174, 214, 0.14);
+  background: rgba(255, 255, 255, 0.03);
+}
+.tournament-leaderboard-head { margin-bottom: 0; }
+.tournament-leaderboard-head h3 {
+  font-size: 1.45rem;
+  letter-spacing: 0.06em;
+}
+.tournament-leaderboard-player {
+  align-items: flex-start;
+}
+.tournament-leaderboard-copy {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.tournament-leaderboard-copy > a,
+.tournament-leaderboard-copy > span {
+  min-width: 0;
+}
+.tournament-leaderboard-copy small {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  color: var(--text-faint);
+  font-size: 0.76rem;
+}
+.tournament-leaderboard-copy small .team-inline-link {
+  transform: scale(0.92);
+  transform-origin: left center;
+}
 
 .record-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .record-card { display: grid; gap: 10px; }

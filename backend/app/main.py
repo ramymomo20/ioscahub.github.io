@@ -444,6 +444,295 @@ async def fetch_one(
         raise HTTPException(status_code=504, detail="Hub database query timed out") from exc
 
 
+TOURNAMENT_MATCH_ROWS_CTE = """
+WITH tournament_match_rows AS (
+    SELECT
+        f.tournament_id,
+        f.fixture_id,
+        COALESCE(f.league_key, 'A') AS league_key,
+        f.week_number,
+        f.week_label,
+        m.match_stats_id,
+        m.match_id,
+        m.match_datetime,
+        m.home_team_name,
+        m.away_team_name,
+        m.home_score,
+        m.away_score,
+        pmd.steam_id,
+        COALESCE(
+            NULLIF(pmd.team_guild_id, ''),
+            CASE
+                WHEN pmd.team_side = 'home' THEN m.home_guild_id
+                WHEN pmd.team_side = 'away' THEN m.away_guild_id
+                ELSE NULL
+            END
+        ) AS team_guild_id,
+        COALESCE(
+            NULLIF(pmd.guild_team_name, ''),
+            CASE
+                WHEN pmd.team_side = 'home' THEN m.home_team_name
+                WHEN pmd.team_side = 'away' THEN m.away_team_name
+                ELSE NULL
+            END
+        ) AS team_name,
+        COALESCE(NULLIF(p.display_name, ''), NULLIF(pmd.player_name, ''), pmd.steam_id) AS player_name,
+        COALESCE(NULLIF(UPPER(TRIM(pmd.position_code)), ''), NULLIF(UPPER(TRIM(p.primary_position)), ''), 'CM') AS position_code,
+        p.discord_id,
+        p.rating AS overall_rating,
+        pmd.match_rating,
+        pmd.is_match_mvp,
+        COALESCE(pmd.goals, 0) AS goals,
+        COALESCE(pmd.assists, 0) AS assists,
+        COALESCE(pmd.second_assists, 0) AS second_assists,
+        COALESCE(pmd.shots, 0) AS shots,
+        COALESCE(pmd.shots_on_goal, 0) AS shots_on_goal,
+        COALESCE(pmd.keeper_saves, 0) AS keeper_saves,
+        COALESCE(pmd.interceptions, 0) AS interceptions,
+        COALESCE(pmd.tackles, 0) AS tackles,
+        COALESCE(pmd.yellow_cards, 0) AS yellow_cards,
+        COALESCE(pmd.red_cards, 0) AS red_cards
+    FROM hub_tournament_fixtures f
+    JOIN hub_matches m ON m.match_stats_id = f.played_match_stats_id
+    JOIN hub_match_player_stats pmd ON pmd.match_stats_id = f.played_match_stats_id
+    LEFT JOIN hub_players p ON p.steam_id = pmd.steam_id
+    WHERE f.tournament_id = %s
+      AND f.played_match_stats_id IS NOT NULL
+      AND COALESCE(f.is_forfeit_home, FALSE) = FALSE
+      AND COALESCE(f.is_forfeit_away, FALSE) = FALSE
+)
+"""
+
+
+async def build_tournament_player_totals(request: Request, tournament_id: int) -> list[dict[str, Any]]:
+    return await fetch_all(
+        request,
+        TOURNAMENT_MATCH_ROWS_CTE
+        + """
+        , latest_player_context AS (
+            SELECT *
+            FROM (
+                SELECT
+                    steam_id,
+                    player_name,
+                    discord_id,
+                    team_guild_id,
+                    team_name,
+                    position_code,
+                    overall_rating,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY steam_id
+                        ORDER BY match_datetime DESC, match_stats_id DESC
+                    ) AS row_num
+                FROM tournament_match_rows
+            ) ranked
+            WHERE row_num = 1
+        )
+        SELECT
+            rows.steam_id AS player_id,
+            ctx.player_name,
+            ctx.discord_id,
+            ctx.team_guild_id,
+            ctx.team_name,
+            ctx.position_code,
+            ctx.overall_rating,
+            COUNT(*)::int AS appearances,
+            SUM(rows.goals)::int AS goals,
+            SUM(rows.assists)::int AS assists,
+            SUM(rows.second_assists)::int AS second_assists,
+            SUM(rows.shots)::int AS shots,
+            SUM(rows.shots_on_goal)::int AS shots_on_goal,
+            SUM(rows.keeper_saves)::int AS keeper_saves,
+            SUM(rows.interceptions)::int AS interceptions,
+            SUM(rows.tackles)::int AS tackles,
+            SUM(rows.yellow_cards)::int AS yellow_cards,
+            SUM(rows.red_cards)::int AS red_cards,
+            SUM(CASE WHEN rows.is_match_mvp THEN 1 ELSE 0 END)::int AS mvp_awards,
+            ROUND(AVG(rows.match_rating)::numeric, 2) AS avg_match_rating
+        FROM tournament_match_rows rows
+        LEFT JOIN latest_player_context ctx ON ctx.steam_id = rows.steam_id
+        GROUP BY
+            rows.steam_id,
+            ctx.player_name,
+            ctx.discord_id,
+            ctx.team_guild_id,
+            ctx.team_name,
+            ctx.position_code,
+            ctx.overall_rating
+        ORDER BY goals DESC, assists DESC, avg_match_rating DESC NULLS LAST, player_name ASC
+        """,
+        (tournament_id,),
+        cache_ttl=0,
+    )
+
+
+async def build_tournament_team_metrics(request: Request, tournament_id: int) -> list[dict[str, Any]]:
+    return await fetch_all(
+        request,
+        TOURNAMENT_MATCH_ROWS_CTE
+        + """
+        , team_ratings AS (
+            SELECT
+                team_guild_id AS guild_id,
+                ROUND(AVG(match_rating)::numeric, 2) AS avg_match_rating
+            FROM tournament_match_rows
+            WHERE team_guild_id IS NOT NULL
+              AND match_rating IS NOT NULL
+            GROUP BY team_guild_id
+        )
+        SELECT
+            standings.tournament_id,
+            standings.guild_id,
+            standings.team_name,
+            standings.team_icon,
+            standings.league_key,
+            standings.wins,
+            standings.draws,
+            standings.losses,
+            standings.goals_for,
+            standings.goals_against,
+            standings.goal_diff,
+            standings.points,
+            standings.matches_played,
+            COALESCE(team_ratings.avg_match_rating, 0) AS avg_match_rating
+        FROM v_hub_tournament_standings_enriched standings
+        LEFT JOIN team_ratings ON team_ratings.guild_id = standings.guild_id
+        WHERE standings.tournament_id = %s
+        ORDER BY standings.points DESC, standings.goal_diff DESC, standings.goals_for DESC, standings.team_name ASC
+        """,
+        (tournament_id, tournament_id),
+        cache_ttl=0,
+    )
+
+
+async def build_tournament_performance_extremes(request: Request, tournament_id: int) -> dict[str, Any]:
+    best = await fetch_one(
+        request,
+        TOURNAMENT_MATCH_ROWS_CTE
+        + """
+        SELECT
+            steam_id AS player_id,
+            player_name,
+            discord_id,
+            team_guild_id,
+            team_name,
+            position_code,
+            overall_rating,
+            match_stats_id,
+            match_id,
+            match_datetime,
+            week_number,
+            week_label,
+            league_key,
+            home_team_name,
+            away_team_name,
+            home_score,
+            away_score,
+            match_rating
+        FROM tournament_match_rows
+        WHERE match_rating IS NOT NULL
+        ORDER BY match_rating DESC, match_datetime DESC, player_name ASC
+        LIMIT 1
+        """,
+        (tournament_id,),
+        cache_ttl=0,
+        cache_namespace="sql:tournament-best-performance",
+    )
+    worst = await fetch_one(
+        request,
+        TOURNAMENT_MATCH_ROWS_CTE
+        + """
+        SELECT
+            steam_id AS player_id,
+            player_name,
+            discord_id,
+            team_guild_id,
+            team_name,
+            position_code,
+            overall_rating,
+            match_stats_id,
+            match_id,
+            match_datetime,
+            week_number,
+            week_label,
+            league_key,
+            home_team_name,
+            away_team_name,
+            home_score,
+            away_score,
+            match_rating
+        FROM tournament_match_rows
+        WHERE match_rating IS NOT NULL
+        ORDER BY match_rating ASC, match_datetime DESC, player_name ASC
+        LIMIT 1
+        """,
+        (tournament_id,),
+        cache_ttl=0,
+        cache_namespace="sql:tournament-worst-performance",
+    )
+    return {
+        "best_match_rating": best,
+        "worst_match_rating": worst,
+    }
+
+
+async def build_tournament_team_of_week(request: Request, tournament_id: int) -> dict[str, Any]:
+    rows = await fetch_all(
+        request,
+        TOURNAMENT_MATCH_ROWS_CTE
+        + """
+        , latest_week AS (
+            SELECT week_number, MAX(match_datetime) AS latest_match_datetime
+            FROM tournament_match_rows
+            WHERE week_number IS NOT NULL
+            GROUP BY week_number
+            ORDER BY week_number DESC, latest_match_datetime DESC
+            LIMIT 1
+        )
+        SELECT
+            rows.steam_id AS player_id,
+            rows.player_name,
+            rows.discord_id,
+            rows.team_guild_id,
+            rows.team_name,
+            rows.position_code,
+            rows.overall_rating,
+            rows.match_stats_id,
+            rows.match_id,
+            rows.match_datetime,
+            rows.week_number,
+            rows.week_label,
+            rows.league_key,
+            rows.match_rating,
+            rows.goals,
+            rows.assists,
+            rows.second_assists,
+            rows.shots,
+            rows.shots_on_goal,
+            rows.keeper_saves,
+            rows.interceptions,
+            rows.tackles,
+            rows.yellow_cards,
+            rows.red_cards,
+            rows.is_match_mvp
+        FROM tournament_match_rows rows
+        JOIN latest_week latest ON latest.week_number = rows.week_number
+        WHERE rows.match_rating IS NOT NULL
+        ORDER BY rows.match_rating DESC, rows.goals DESC, rows.assists DESC, rows.interceptions DESC, rows.player_name ASC
+        """,
+        (tournament_id,),
+        cache_ttl=0,
+    )
+    if not rows:
+        return {}
+
+    return {
+        "week_number": rows[0].get("week_number"),
+        "week_label": rows[0].get("week_label"),
+        "candidates": rows,
+    }
+
+
 async def fetch_cached_payload(
     request: Request,
     namespace: str,
@@ -918,6 +1207,12 @@ async def get_tournament(request: Request, tournament_id: int):
         (tournament_id,),
         cache_ttl=0,
     )
+    tournament["analytics"] = {
+        "player_totals": await build_tournament_player_totals(request, tournament_id),
+        "team_metrics": await build_tournament_team_metrics(request, tournament_id),
+        "performance_extremes": await build_tournament_performance_extremes(request, tournament_id),
+        "team_of_the_week": await build_tournament_team_of_week(request, tournament_id),
+    }
     return tournament
 
 

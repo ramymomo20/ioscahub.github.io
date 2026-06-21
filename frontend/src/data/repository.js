@@ -1118,11 +1118,13 @@ function mapTournamentSummary(raw) {
     status: toTitleCase(raw.status || 'Unknown'),
     teams: toNumber(raw.num_teams),
     prestige: formatTournamentPrestige(raw.format),
+    gameType: formatGameType(raw.format),
     schedule: formatIsoDate(raw.created_at) || 'Season archive',
     description: buildTournamentDescription(raw),
     winnerTeamId: null,
     standingsGroups: [],
     leaders: {},
+    analytics: null,
     fixtures: [],
     bracket: raw.format === 'cup' ? ['Knockout'] : ['League Table'],
     isDetailed: false,
@@ -1133,13 +1135,14 @@ function mapTournamentDetail(rawTournament, players) {
   const summary = mapTournamentSummary(rawTournament)
   const fixtures = (rawTournament.fixtures ?? []).map((entry) => mapTournamentFixture(entry, summary))
   const standingsGroups = buildTournamentStandingsGroups(rawTournament, fixtures)
-  const teamIds = new Set((rawTournament.teams ?? []).map((entry) => String(entry.guild_id)).filter(Boolean))
+  const analytics = buildTournamentAnalytics(rawTournament, standingsGroups)
 
   return {
     ...summary,
     winnerTeamId: pickTournamentWinner(summary.status, standingsGroups),
     standingsGroups,
-    leaders: buildTournamentLeaders(players, teamIds),
+    leaders: analytics?.leaderboards ?? {},
+    analytics,
     fixtures,
     bracket: summary.prestige.toLowerCase().includes('cup') ? ['Knockout'] : ['League Table'],
     isDetailed: true,
@@ -1787,18 +1790,217 @@ function pickTournamentWinner(status, standingsGroups) {
   return firstGroup?.rows?.[0]?.teamId ?? null
 }
 
-function buildTournamentLeaders(players, teamIds) {
-  const pool = teamIds.size
-    ? players.filter((player) => teamIds.has(player.teamId))
-    : players
+function buildTournamentAnalytics(rawTournament, standingsGroups) {
+  const rawAnalytics = rawTournament.analytics ?? {}
+  const playerTotals = Array.isArray(rawAnalytics.player_totals)
+    ? rawAnalytics.player_totals.map(mapTournamentPlayerTotal)
+    : []
+  const teamMetrics = Array.isArray(rawAnalytics.team_metrics)
+    ? rawAnalytics.team_metrics.map(mapTournamentTeamMetric)
+    : []
+  const leaderboards = buildTournamentLeaderboards(playerTotals)
+  const performanceExtremes = mapTournamentPerformanceExtremes(rawAnalytics.performance_extremes)
+  const teamOfTheWeek = mapTournamentTeamOfTheWeek(rawAnalytics.team_of_the_week, rawTournament.format)
+  const standingsRows = standingsGroups.flatMap((group) => group.rows.map((row) => ({ ...row, leagueKey: group.leagueKey })))
 
   return {
-    scorers: pool.slice().sort((left, right) => right.stats.goals - left.stats.goals).slice(0, 3).map((player) => player.name),
-    assisters: pool.slice().sort((left, right) => right.stats.assists - left.stats.assists).slice(0, 3).map((player) => player.name),
-    mvps: pool.slice().sort((left, right) => right.mvps - left.mvps).slice(0, 3).map((player) => player.name),
-    goalkeepers: pool.filter((player) => player.position === 'GK').sort((left, right) => right.stats.saves - left.stats.saves).slice(0, 3).map((player) => player.name),
-    defenders: pool.filter((player) => ['LB', 'CB', 'RB'].includes(player.position)).sort((left, right) => right.stats.interceptions - left.stats.interceptions).slice(0, 3).map((player) => player.name),
+    playerTotals,
+    teamMetrics,
+    leaderboards,
+    insights: buildTournamentInsights(standingsRows, teamMetrics, playerTotals, performanceExtremes),
+    performanceExtremes,
+    teamOfTheWeek,
   }
+}
+
+function mapTournamentPlayerTotal(raw) {
+  return {
+    playerId: raw?.player_id != null ? String(raw.player_id) : null,
+    playerName: raw?.player_name ?? 'Unknown Player',
+    discordId: normalizeRegisteredDiscordId(raw?.discord_id),
+    teamId: raw?.team_guild_id != null ? String(raw.team_guild_id) : null,
+    teamName: raw?.team_name ?? null,
+    position: normalizePosition(raw?.position_code),
+    overallRating: toNumber(raw?.overall_rating),
+    appearances: toNumber(raw?.appearances),
+    goals: toNumber(raw?.goals),
+    assists: toNumber(raw?.assists),
+    secondAssists: toNumber(raw?.second_assists),
+    shots: toNumber(raw?.shots),
+    shotsOnGoal: toNumber(raw?.shots_on_goal),
+    saves: toNumber(raw?.keeper_saves),
+    interceptions: toNumber(raw?.interceptions),
+    tackles: toNumber(raw?.tackles),
+    yellowCards: toNumber(raw?.yellow_cards),
+    redCards: toNumber(raw?.red_cards),
+    mvps: toNumber(raw?.mvp_awards),
+    avgRating: Number(toNumber(raw?.avg_match_rating).toFixed(2)),
+  }
+}
+
+function mapTournamentTeamMetric(raw) {
+  return {
+    teamId: raw?.guild_id != null ? String(raw.guild_id) : null,
+    teamName: raw?.team_name ?? 'Unknown Team',
+    leagueKey: normalizeTournamentLeagueKey(raw?.league_key),
+    wins: toNumber(raw?.wins),
+    draws: toNumber(raw?.draws),
+    losses: toNumber(raw?.losses),
+    goalsFor: toNumber(raw?.goals_for),
+    goalsAgainst: toNumber(raw?.goals_against),
+    goalDiff: toNumber(raw?.goal_diff),
+    points: toNumber(raw?.points),
+    played: toNumber(raw?.matches_played),
+    avgMatchRating: Number(toNumber(raw?.avg_match_rating).toFixed(2)),
+  }
+}
+
+function buildTournamentLeaderboards(playerTotals) {
+  const withPositiveValue = (entries, valueSelector) => entries.filter((entry) => valueSelector(entry) > 0)
+
+  return [
+    { key: 'goals', label: 'Goals', entries: withPositiveValue(playerTotals, (entry) => entry.goals).sort((left, right) => right.goals - left.goals || right.avgRating - left.avgRating).slice(0, 5).map((entry) => ({ ...entry, value: entry.goals })) },
+    { key: 'assists', label: 'Assists', entries: withPositiveValue(playerTotals, (entry) => entry.assists).sort((left, right) => right.assists - left.assists || right.secondAssists - left.secondAssists || right.avgRating - left.avgRating).slice(0, 5).map((entry) => ({ ...entry, value: entry.assists })) },
+    { key: 'shots', label: 'Shots', entries: withPositiveValue(playerTotals, (entry) => entry.shots).sort((left, right) => right.shots - left.shots || right.shotsOnGoal - left.shotsOnGoal).slice(0, 5).map((entry) => ({ ...entry, value: entry.shots })) },
+    { key: 'saves', label: 'Saves', entries: withPositiveValue(playerTotals.filter((entry) => entry.position === 'GK' || entry.saves > 0), (entry) => entry.saves).sort((left, right) => right.saves - left.saves || right.avgRating - left.avgRating).slice(0, 5).map((entry) => ({ ...entry, value: entry.saves })) },
+    { key: 'interceptions', label: 'Interceptions', entries: withPositiveValue(playerTotals, (entry) => entry.interceptions).sort((left, right) => right.interceptions - left.interceptions || right.tackles - left.tackles).slice(0, 5).map((entry) => ({ ...entry, value: entry.interceptions })) },
+    { key: 'tackles', label: 'Tackles', entries: withPositiveValue(playerTotals, (entry) => entry.tackles).sort((left, right) => right.tackles - left.tackles || right.interceptions - left.interceptions).slice(0, 5).map((entry) => ({ ...entry, value: entry.tackles })) },
+    { key: 'rating', label: 'Avg Rating', entries: playerTotals.filter((entry) => entry.appearances > 0 && entry.avgRating > 0).sort((left, right) => right.avgRating - left.avgRating || right.appearances - left.appearances).slice(0, 5).map((entry) => ({ ...entry, value: entry.avgRating })) },
+  ]
+}
+
+function mapTournamentPerformanceExtremes(raw) {
+  return {
+    bestMatchRating: mapTournamentPerformance(raw?.best_match_rating),
+    worstMatchRating: mapTournamentPerformance(raw?.worst_match_rating),
+  }
+}
+
+function mapTournamentPerformance(raw) {
+  if (!raw) {
+    return null
+  }
+
+  return {
+    playerId: raw?.player_id != null ? String(raw.player_id) : null,
+    playerName: raw?.player_name ?? 'Unknown Player',
+    teamId: raw?.team_guild_id != null ? String(raw.team_guild_id) : null,
+    teamName: raw?.team_name ?? null,
+    matchId: raw?.match_stats_id != null ? String(raw.match_stats_id) : null,
+    rating: Number(toNumber(raw?.match_rating).toFixed(2)),
+    weekLabel: raw?.week_label ?? null,
+    summary: `${raw?.home_team_name ?? 'Home'} ${toNumber(raw?.home_score)} : ${toNumber(raw?.away_score)} ${raw?.away_team_name ?? 'Away'}`,
+  }
+}
+
+function buildTournamentInsights(standingsRows, teamMetrics, playerTotals, performanceExtremes) {
+  const bestTeam = standingsRows.slice().sort((left, right) => {
+    const leftPpg = toNumber(left.points) / Math.max(1, toNumber(left.played))
+    const rightPpg = toNumber(right.points) / Math.max(1, toNumber(right.played))
+    return rightPpg - leftPpg || toNumber(right.gd) - toNumber(left.gd) || toNumber(right.goalsFor) - toNumber(left.goalsFor)
+  })[0] ?? null
+  const bestAttack = teamMetrics.filter((entry) => entry.played > 0).slice().sort((left, right) => {
+    const leftRate = left.goalsFor / Math.max(1, left.played)
+    const rightRate = right.goalsFor / Math.max(1, right.played)
+    return rightRate - leftRate || right.goalsFor - left.goalsFor
+  })[0] ?? null
+  const bestDefense = teamMetrics.filter((entry) => entry.played > 0).slice().sort((left, right) => {
+    const leftRate = left.goalsAgainst / Math.max(1, left.played)
+    const rightRate = right.goalsAgainst / Math.max(1, right.played)
+    return leftRate - rightRate || left.goalsAgainst - right.goalsAgainst || right.goalDiff - left.goalDiff
+  })[0] ?? null
+  const highestTeamRating = teamMetrics.filter((entry) => entry.played > 0 && entry.avgMatchRating > 0).slice().sort((left, right) => right.avgMatchRating - left.avgMatchRating || right.points - left.points)[0] ?? null
+  const highestAverage = playerTotals.filter((entry) => entry.appearances > 0 && entry.avgRating > 0).slice().sort((left, right) => right.avgRating - left.avgRating || right.appearances - left.appearances)[0] ?? null
+  const lowestAverage = playerTotals.filter((entry) => entry.appearances > 0 && entry.avgRating > 0).slice().sort((left, right) => left.avgRating - right.avgRating || right.appearances - left.appearances)[0] ?? null
+
+  return {
+    bestTeam,
+    bestAttack,
+    bestDefense,
+    highestTeamRating,
+    highestAverage,
+    lowestAverage,
+    bestMatchRating: performanceExtremes.bestMatchRating,
+    worstMatchRating: performanceExtremes.worstMatchRating,
+  }
+}
+
+function mapTournamentTeamOfTheWeek(raw, format) {
+  const candidates = Array.isArray(raw?.candidates)
+    ? raw.candidates.map((entry) => ({
+      playerId: entry?.player_id != null ? String(entry.player_id) : null,
+      playerName: entry?.player_name ?? 'Unknown Player',
+      teamId: entry?.team_guild_id != null ? String(entry.team_guild_id) : null,
+      position: normalizePosition(entry?.position_code),
+      rating: Number(toNumber(entry?.match_rating).toFixed(1)),
+      goals: toNumber(entry?.goals),
+      assists: toNumber(entry?.assists) + toNumber(entry?.second_assists),
+      saves: toNumber(entry?.keeper_saves),
+      interceptions: toNumber(entry?.interceptions),
+      tackles: toNumber(entry?.tackles),
+      yellowCards: toNumber(entry?.yellow_cards),
+      redCards: toNumber(entry?.red_cards),
+      isMvp: Boolean(entry?.is_match_mvp),
+    }))
+    : []
+
+  if (!candidates.length) {
+    return null
+  }
+
+  const slotsByFormat = {
+    '5V5': ['GK', 'LB', 'RB', 'LW', 'RW'],
+    '6V6': ['GK', 'LB', 'CB', 'RB', 'LW', 'RW'],
+    '8V8': ['GK', 'LB', 'CB', 'RB', 'CM', 'LW', 'CF', 'RW'],
+  }
+  const roleGroups = {
+    GK: ['GK'],
+    LB: ['LB', 'CB', 'RB'],
+    CB: ['CB', 'LB', 'RB'],
+    RB: ['RB', 'CB', 'LB'],
+    CM: ['CM', 'LM', 'RM'],
+    LW: ['LW', 'LM', 'RW'],
+    CF: ['CF', 'CM', 'RW', 'LW'],
+    RW: ['RW', 'RM', 'LW'],
+  }
+  const slots = slotsByFormat[formatGameType(format)] ?? slotsByFormat['8V8']
+  const used = new Set()
+
+  const lineup = slots.map((slot) => {
+    const player = candidates.find((entry) => !used.has(entry.playerId) && (roleGroups[slot] ?? [slot]).includes(entry.position))
+      ?? candidates.find((entry) => !used.has(entry.playerId))
+
+    if (!player) {
+      return { player: '', role: slot, rating: null, badges: [] }
+    }
+
+    used.add(player.playerId)
+    return {
+      playerId: player.playerId,
+      role: slot,
+      rating: player.rating,
+      badges: buildTournamentTeamOfWeekBadges(player),
+    }
+  })
+
+  return {
+    title: raw?.week_label ?? (raw?.week_number != null ? `Jornada ${raw.week_number}` : 'Latest Round'),
+    lineup,
+  }
+}
+
+function buildTournamentTeamOfWeekBadges(player) {
+  const badges = []
+  if (player.position === 'GK' && player.saves > 0) {
+    badges.push({ type: 'save', count: Math.min(player.saves, 9) })
+  } else {
+    if (player.goals > 0) badges.push({ type: 'goal', count: Math.min(player.goals, 9) })
+    if (player.assists > 0) badges.push({ type: 'assist', count: Math.min(player.assists, 9) })
+  }
+  if (player.isMvp) badges.push({ type: 'mvp', count: 1 })
+  if (player.yellowCards > 0) badges.push({ type: 'yellow-card', count: Math.min(player.yellowCards, 2) })
+  if (player.redCards > 0) badges.push({ type: 'red-card', count: 1 })
+  return badges
 }
 
 function buildRecords(players, teams) {
