@@ -1362,15 +1362,10 @@ function enrichPlayers(players, teams) {
 }
 
 function enrichTournaments(tournaments, teams, players) {
-  return tournaments.map((tournament) => {
-    const relatedTeams = teams.filter((team) => team.competition === tournament.name)
-    const teamIds = new Set(relatedTeams.map((team) => team.id))
-
-    return {
-      ...tournament,
-      leaders: tournament.isDetailed ? tournament.leaders : buildTournamentLeaders(players, teamIds),
-    }
-  })
+  return tournaments.map((tournament) => ({
+    ...tournament,
+    leaders: tournament.isDetailed ? tournament.leaders : [],
+  }))
 }
 
 function buildLineupSideLookup(rawLineups = []) {
