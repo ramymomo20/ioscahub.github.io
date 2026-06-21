@@ -1,4 +1,4 @@
-import { NavLink, Outlet } from 'react-router-dom'
+import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useHubData } from '../data/repository'
 
 const navItems = [
@@ -15,6 +15,7 @@ const navItems = [
 
 export function AppShell() {
   const { loading, error } = useHubData()
+  const location = useLocation()
   const brandIcon = `${import.meta.env.BASE_URL}icons/iosca-icon.png`
   const discordIcon = `${import.meta.env.BASE_URL}icons/discord-icon.png`
   const githubIcon = `${import.meta.env.BASE_URL}icons/github-icon.png`
@@ -25,6 +26,7 @@ export function AppShell() {
     { href: 'https://github.com/ramymomo20/exhub.github-io', label: 'GitHub', icon: githubIcon },
     { href: 'https://store.steampowered.com/app/673560/IOSoccer/', label: 'Steam', icon: steamIcon },
   ]
+  const isTournamentDetailRoute = /^\/tournaments\/[^/]+$/.test(location.pathname)
 
   return (
     <div className="site-shell">
@@ -68,7 +70,7 @@ export function AppShell() {
         </nav>
       </header>
 
-      <main className="page-wrap">
+      <main className={`page-wrap${isTournamentDetailRoute ? ' page-wrap-wide' : ''}`}>
         {loading ? (
           <div className="page-stack">
             <section className="card widget">
