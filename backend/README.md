@@ -35,6 +35,23 @@ The backend reads the repo root `.env` by default. Required variables:
 ```env
 SUPABASE_DB_URL=postgresql://...
 HUB_POSTGRES_SCHEMA=iosca_hub_production
+HUB_FRONTEND_URL=https://ramymomo20.github.io/ioscahub.github.io/#
+HUB_CORS_ORIGINS=https://ramymomo20.github.io,http://localhost:5173
+HUB_SESSION_SECRET=replace-this
+HUB_DISCORD_CLIENT_ID=...
+HUB_DISCORD_CLIENT_SECRET=...
+```
+
+Optional auth/live settings:
+
+```env
+HUB_SESSION_COOKIE_NAME=iosca_hub_session
+HUB_SESSION_COOKIE_SECURE=true
+HUB_SESSION_TTL_SECONDS=2592000
+HUB_AUTH_CHALLENGE_TTL_SECONDS=900
+HUB_LIVE_SYNC_POLL_SECONDS=15
+IOSCA_HUB_API_PUBLIC_BASE_URL=https://your-api-host
+HUB_AUTH_DM_POLL_SECONDS=60
 ```
 
 ## Data Boundary
@@ -90,3 +107,36 @@ VITE_HUB_API_BASE_URL=https://your-api-host
 ```
 
 The frontend will call endpoints like `/api/players`, `/api/teams`, `/api/matches`, `/api/tournaments`, and `/api/media` against that base URL.
+
+## Auth and Realtime
+
+The hub now supports:
+
+- Discord OAuth login
+- Steam OpenID login
+- linking multiple Steam identities to one hub account
+- DM approval for Steam linking when a Discord identity is already attached
+- a live websocket feed at `/ws/live` so dashboard clients can refresh when hub sync state changes
+
+Apply the auth migration after pulling:
+
+```bash
+psql "$SUPABASE_DB_URL" -f postgres_migrations/002_hub_auth_schema.sql
+```
+
+## CI/CD
+
+Two GitHub Actions workflows are included:
+
+- `hub-pages.yml` builds and deploys the Vite frontend to GitHub Pages
+- `bot-deploy.yml` uploads the bot/backend runtime to the Sparked host over SFTP
+
+Configure these GitHub secrets for bot deploy:
+
+```text
+SPARKED_SERVER_HOST
+SPARKED_SERVER_PORT
+SPARKED_SERVER_USERNAME
+SPARKED_SERVER_PASSWORD
+SPARKED_SERVER_REMOTE_PATH
+```

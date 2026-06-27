@@ -299,6 +299,21 @@ async def _fetch_changed_match_scope_for_player_stats(
     return scope_ids, _max_source_updated_at(rows, "changed_at")
 
 
+async def _fetch_repair_scope_for_player_stats(hub_pool: asyncpg.Pool) -> list[int]:
+    rows = _rows_as_dicts(await hub_pool.fetch(
+        f"""
+        SELECT m.id AS match_stats_id
+        FROM public.match_stats m
+        LEFT JOIN {_hub_relation("hub_match_player_stats")} h
+          ON h.match_stats_id = m.id
+        WHERE LOWER(BTRIM(COALESCE(m.home_team_name, ''))) = LOWER(BTRIM(COALESCE(m.away_team_name, '')))
+        GROUP BY m.id
+        HAVING COUNT(DISTINCT CASE WHEN h.team_side IN ('home', 'away') THEN h.team_side END) < 2
+        """
+    ))
+    return sorted({int(row["match_stats_id"]) for row in rows if row.get("match_stats_id") is not None})
+
+
 async def _fetch_changed_match_scope_for_events(
     pg_pool: asyncpg.Pool,
     watermark: datetime | None,
@@ -626,6 +641,10 @@ async def sync_match_lineups(pg_pool: asyncpg.Pool, hub_pool: asyncpg.Pool, *, f
 async def sync_match_player_stats(pg_pool: asyncpg.Pool, hub_pool: asyncpg.Pool, *, force_full: bool = False) -> SyncResult:
     watermark = await _resolve_watermark(hub_pool, "hub_match_player_stats", force_full=force_full)
     scope_ids, max_scope_updated_at = await _fetch_changed_match_scope_for_player_stats(pg_pool, watermark)
+    if watermark is not None:
+        repair_scope_ids = await _fetch_repair_scope_for_player_stats(hub_pool)
+        if repair_scope_ids:
+            scope_ids = sorted({*scope_ids, *repair_scope_ids})
 
     if watermark is not None and not scope_ids:
         return SyncResult("hub_match_player_stats", 0, None)
@@ -665,25 +684,28 @@ async def sync_match_player_stats(pg_pool: asyncpg.Pool, hub_pool: asyncpg.Pool,
             ms.id AS match_stats_id,
             ms.match_id,
             pmd.steam_id,
-            COALESCE(
-                pmd.guild_id::text,
-                CASE
-                    WHEN pmd.guild_id::text = ms.home_guild_id::text THEN ms.home_guild_id::text
-                    WHEN pmd.guild_id::text = ms.away_guild_id::text THEN ms.away_guild_id::text
-                    WHEN pmd.guild_team_name = ms.home_team_name THEN ms.home_guild_id::text
-                    WHEN pmd.guild_team_name = ms.away_team_name THEN ms.away_guild_id::text
-                    WHEN lineup_side.side = 'home' THEN ms.home_guild_id::text
-                    WHEN lineup_side.side = 'away' THEN ms.away_guild_id::text
-                    ELSE NULL
-                END
-            ) AS team_guild_id,
             CASE
                 WHEN pmd.guild_id::text = ms.home_guild_id::text THEN 'home'
                 WHEN pmd.guild_id::text = ms.away_guild_id::text THEN 'away'
-                WHEN pmd.guild_team_name = ms.home_team_name THEN 'home'
-                WHEN pmd.guild_team_name = ms.away_team_name THEN 'away'
-                ELSE lineup_side.side
+                WHEN lineup_side.side = 'home' THEN 'home'
+                WHEN lineup_side.side = 'away' THEN 'away'
+                WHEN LOWER(BTRIM(COALESCE(ms.home_team_name, ''))) <> LOWER(BTRIM(COALESCE(ms.away_team_name, '')))
+                  AND LOWER(BTRIM(COALESCE(pmd.guild_team_name, ''))) = LOWER(BTRIM(COALESCE(ms.home_team_name, ''))) THEN 'home'
+                WHEN LOWER(BTRIM(COALESCE(ms.home_team_name, ''))) <> LOWER(BTRIM(COALESCE(ms.away_team_name, '')))
+                  AND LOWER(BTRIM(COALESCE(pmd.guild_team_name, ''))) = LOWER(BTRIM(COALESCE(ms.away_team_name, ''))) THEN 'away'
+                ELSE NULL
             END AS team_side,
+            CASE
+                WHEN pmd.guild_id::text = ms.home_guild_id::text THEN ms.home_guild_id::text
+                WHEN pmd.guild_id::text = ms.away_guild_id::text THEN ms.away_guild_id::text
+                WHEN lineup_side.side = 'home' THEN ms.home_guild_id::text
+                WHEN lineup_side.side = 'away' THEN ms.away_guild_id::text
+                WHEN LOWER(BTRIM(COALESCE(ms.home_team_name, ''))) <> LOWER(BTRIM(COALESCE(ms.away_team_name, '')))
+                  AND LOWER(BTRIM(COALESCE(pmd.guild_team_name, ''))) = LOWER(BTRIM(COALESCE(ms.home_team_name, ''))) THEN ms.home_guild_id::text
+                WHEN LOWER(BTRIM(COALESCE(ms.home_team_name, ''))) <> LOWER(BTRIM(COALESCE(ms.away_team_name, '')))
+                  AND LOWER(BTRIM(COALESCE(pmd.guild_team_name, ''))) = LOWER(BTRIM(COALESCE(ms.away_team_name, ''))) THEN ms.away_guild_id::text
+                ELSE NULL
+            END AS team_guild_id,
             pmd.guild_team_name,
             pmd.player_name,
             pmd.position AS position_code,

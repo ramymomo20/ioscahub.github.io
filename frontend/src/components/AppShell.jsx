@@ -1,4 +1,5 @@
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
+import { useHubSession } from '../data/auth'
 import { useHubData } from '../data/repository'
 
 const navItems = [
@@ -15,6 +16,7 @@ const navItems = [
 
 export function AppShell() {
   const { loading, error } = useHubData()
+  const session = useHubSession()
   const location = useLocation()
   const brandIcon = `${import.meta.env.BASE_URL}icons/iosca-icon.png`
   const discordIcon = `${import.meta.env.BASE_URL}icons/discord-icon.png`
@@ -67,6 +69,12 @@ export function AppShell() {
               </NavLink>
             )
           ))}
+          <NavLink
+            to={session.authenticated ? '/account' : '/login'}
+            className={({ isActive }) => `nav-link${isActive ? ' is-active' : ''}`}
+          >
+            {session.authenticated ? 'Account' : 'Login'}
+          </NavLink>
         </nav>
       </header>
 

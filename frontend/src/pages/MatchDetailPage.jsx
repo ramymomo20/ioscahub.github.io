@@ -16,8 +16,8 @@ export function MatchDetailPage() {
     return <Navigate to="/matches" replace />
   }
 
-  const homeTeam = getTeamById(match.homeTeamId) ?? buildTransientMatchTeam(match.homeTeamId, match.homeTeamName, 'HM')
-  const awayTeam = getTeamById(match.awayTeamId) ?? buildTransientMatchTeam(match.awayTeamId, match.awayTeamName, 'AW')
+  const homeTeam = getTeamById(match.homeTeamId) ?? buildTransientMatchTeam(match.homeTeamId, match.homeTeamName, 'HM', match.homeCrestUrl)
+  const awayTeam = getTeamById(match.awayTeamId) ?? buildTransientMatchTeam(match.awayTeamId, match.awayTeamName, 'AW', match.awayCrestUrl)
   const mvp = getPlayerById(match.mvpId)
 
   return (
@@ -92,17 +92,23 @@ function MatchHeroTeam({ team, isWinner = false }) {
     return null
   }
 
-  return (
-    <Link className={`match-hero-team-link${isWinner ? ' is-winner' : ''}`} to={`/teams/${team.id}`}>
+  const content = (
+    <>
       <div className="match-hero-crest-shell">
-        <Crest teamId={team.id} large />
+        <Crest teamId={team.id} team={team} large />
       </div>
       <strong className="match-hero-team-name">{team.name}</strong>
-    </Link>
+    </>
   )
+
+  if (!getTeamById(team.id)) {
+    return <div className={`match-hero-team-link${isWinner ? ' is-winner' : ''}`}>{content}</div>
+  }
+
+  return <Link className={`match-hero-team-link${isWinner ? ' is-winner' : ''}`} to={`/teams/${team.id}`}>{content}</Link>
 }
 
-function buildTransientMatchTeam(teamId, teamName, fallbackShortName) {
+function buildTransientMatchTeam(teamId, teamName, fallbackShortName, crestUrl = null) {
   const safeName = String(teamName ?? '').trim() || 'Unknown Team'
   const safeId = teamId != null ? String(teamId) : `transient-${safeName.toLowerCase().replace(/\s+/g, '-')}`
 
@@ -111,7 +117,7 @@ function buildTransientMatchTeam(teamId, teamName, fallbackShortName) {
     name: safeName,
     shortName: safeName.slice(0, 3).toUpperCase() || fallbackShortName,
     crest: safeName.slice(0, 2).toUpperCase() || fallbackShortName,
-    crestUrl: null,
+    crestUrl,
     colors: ['#46d7ff', '#1e63ff'],
   }
 }

@@ -9,10 +9,11 @@ import re
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, RedirectResponse
 
-from . import cache, config
+from . import auth, cache, config, player_registration
 from .db import create_hub_postgres_pool, public_row, public_rows
 
 OPTIONAL_MATCH_PLAYER_STATS_COLUMNS = (
@@ -22,6 +23,62 @@ OPTIONAL_MATCH_PLAYER_STATS_COLUMNS = (
     "throw_ins",
     "goal_kicks",
 )
+
+
+class LiveSyncBroker:
+    def __init__(self) -> None:
+        self.connections: set[WebSocket] = set()
+        self.last_payload: dict[str, Any] | None = None
+
+    async def connect(self, websocket: WebSocket) -> None:
+        await websocket.accept()
+        self.connections.add(websocket)
+        if self.last_payload is not None:
+            await websocket.send_json(self.last_payload)
+
+    def disconnect(self, websocket: WebSocket) -> None:
+        self.connections.discard(websocket)
+
+    async def broadcast(self, payload: dict[str, Any]) -> None:
+        self.last_payload = payload
+        stale: list[WebSocket] = []
+        for websocket in self.connections:
+            try:
+                await websocket.send_json(payload)
+            except Exception:
+                stale.append(websocket)
+        for websocket in stale:
+            self.disconnect(websocket)
+
+
+async def _fetch_live_sync_payload(pool) -> dict[str, Any]:
+    rows = await pool.fetch(
+        f"""
+        SELECT sync_key, last_synced_at, rows_synced, status, error_message, updated_at
+        FROM "{config.HUB_POSTGRES_SCHEMA}".hub_sync_state
+        ORDER BY sync_key ASC
+        """
+    )
+    return {
+        "type": "hub_sync_state",
+        "items": public_rows([dict(row) for row in rows]),
+        "generated_at": datetime.utcnow().isoformat(),
+    }
+
+
+async def _run_live_sync_poller(app: FastAPI) -> None:
+    while True:
+        try:
+            payload = await _fetch_live_sync_payload(app.state.hub_pool)
+            fingerprint = json.dumps(payload, sort_keys=True)
+            if fingerprint != getattr(app.state, "live_sync_fingerprint", None):
+                app.state.live_sync_fingerprint = fingerprint
+                await app.state.live_sync_broker.broadcast(payload)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            pass
+        await asyncio.sleep(config.HUB_LIVE_SYNC_POLL_SECONDS)
 
 
 async def _fetch_table_columns(pool, table_name: str) -> set[str]:
@@ -46,9 +103,17 @@ async def lifespan(app: FastAPI):
         app.state.hub_pool,
         "hub_match_player_stats",
     )
+    app.state.live_sync_broker = LiveSyncBroker()
+    app.state.live_sync_fingerprint = None
+    app.state.live_sync_task = asyncio.create_task(_run_live_sync_poller(app))
     try:
         yield
     finally:
+        app.state.live_sync_task.cancel()
+        try:
+            await app.state.live_sync_task
+        except asyncio.CancelledError:
+            pass
         await cache.close_redis_client(getattr(app.state, "redis", None))
         await app.state.hub_pool.close()
 
@@ -57,9 +122,9 @@ app = FastAPI(title=config.API_TITLE, version=config.API_VERSION, lifespan=lifes
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["GET", "OPTIONS"],
+    allow_origins=config.HUB_CORS_ORIGINS or ["http://localhost:5173"],
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -1379,3 +1444,173 @@ async def sync_state(request: Request):
         request,
         "SELECT * FROM hub_sync_state ORDER BY updated_at DESC",
     )
+
+
+@app.websocket("/ws/live")
+async def hub_live_socket(websocket: WebSocket):
+    broker: LiveSyncBroker = websocket.app.state.live_sync_broker
+    await broker.connect(websocket)
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        broker.disconnect(websocket)
+    except Exception:
+        broker.disconnect(websocket)
+
+
+@app.get("/api/auth/session")
+async def auth_session(request: Request):
+    session = await auth.fetch_session(
+        request.app.state.hub_pool,
+        request.cookies.get(config.HUB_SESSION_COOKIE_NAME),
+    )
+    if not session:
+        return {"authenticated": False, "user": None}
+    return await auth.build_session_payload(request.app.state.hub_pool, int(session["user_id"]))
+
+
+@app.get("/api/player-registration/status")
+async def player_registration_status(request: Request, token: str = Query(..., min_length=16)):
+    current_user = await auth.current_user_from_request(request)
+    return await player_registration.get_registration_status(
+        request.app.state.hub_pool,
+        token,
+        hub_user_id=int(current_user["user_id"]) if current_user else None,
+    )
+
+
+@app.post("/api/player-registration/complete")
+async def player_registration_complete(request: Request, payload: dict[str, Any]):
+    user = await auth.require_authenticated_user(request)
+    token = str((payload or {}).get("token") or "").strip()
+    if not token:
+        raise HTTPException(status_code=400, detail="Missing registration token.")
+    return await player_registration.complete_registration(
+        request.app.state.hub_pool,
+        hub_user_id=int(user["user_id"]),
+        token=token,
+    )
+
+
+@app.post("/api/auth/logout")
+async def auth_logout(request: Request):
+    await auth.revoke_session(
+        request.app.state.hub_pool,
+        request.cookies.get(config.HUB_SESSION_COOKIE_NAME),
+    )
+    response = JSONResponse({"ok": True})
+    auth.clear_session_cookie(response)
+    return response
+
+
+@app.post("/api/auth/identities/{provider}/{provider_subject}/primary")
+async def auth_set_primary_identity(request: Request, provider: str, provider_subject: str):
+    user = await auth.require_authenticated_user(request)
+    await auth.set_identity_primary(
+        request.app.state.hub_pool,
+        user_id=int(user["user_id"]),
+        provider=str(provider).strip().lower(),
+        provider_subject=str(provider_subject).strip(),
+    )
+    return await auth.build_session_payload(request.app.state.hub_pool, int(user["user_id"]))
+
+
+@app.post("/api/auth/identities/{provider}/{provider_subject}/unlink")
+async def auth_unlink_identity(request: Request, provider: str, provider_subject: str):
+    user = await auth.require_authenticated_user(request)
+    await auth.unlink_identity(
+        request.app.state.hub_pool,
+        user_id=int(user["user_id"]),
+        provider=str(provider).strip().lower(),
+        provider_subject=str(provider_subject).strip(),
+    )
+    return await auth.build_session_payload(request.app.state.hub_pool, int(user["user_id"]))
+
+
+@app.get("/api/auth/discord/start")
+async def auth_discord_start(request: Request, intent: str = Query("login", pattern="^(login|link)$")):
+    return RedirectResponse(auth.build_discord_authorize_url(request, intent=intent), status_code=302)
+
+
+@app.get("/api/auth/discord/callback")
+async def auth_discord_callback(request: Request, code: str | None = None, state: str = "login"):
+    if not code:
+        raise HTTPException(status_code=400, detail="Missing Discord authorization code.")
+    redirect_uri = auth.provider_callback_url(request, "/api/auth/discord/callback")
+    profile = await auth.exchange_discord_code(code, redirect_uri)
+    user_id, result = await auth.login_or_link_identity(
+        request,
+        provider=profile["provider"],
+        provider_subject=profile["provider_subject"],
+        display_name=profile["display_name"],
+        avatar_url=profile["avatar_url"],
+        profile_json=profile["profile_json"],
+        intent=state,
+    )
+    token, expires_at = await auth.create_session(request.app.state.hub_pool, user_id, request)
+    response = RedirectResponse(auth.build_frontend_url("/account", discord=result), status_code=303)
+    auth.set_session_cookie(response, token, expires_at)
+    return response
+
+
+@app.get("/api/auth/steam/start")
+async def auth_steam_start(request: Request, intent: str = Query("login", pattern="^(login|link)$")):
+    return RedirectResponse(auth.build_steam_authorize_url(request, intent=intent), status_code=302)
+
+
+@app.get("/api/auth/steam/callback")
+async def auth_steam_callback(request: Request):
+    params = {key: value for key, value in request.query_params.items()}
+    state = str(params.get("state") or "login").strip().lower()
+    profile = await auth.resolve_steam_identity(request, params)
+    current_user = await auth.current_user_from_request(request)
+    if state == "link" and current_user:
+        rows = await request.app.state.hub_pool.fetch(
+            f"""
+            SELECT provider_subject
+            FROM "{config.HUB_POSTGRES_SCHEMA}".hub_auth_identities
+            WHERE user_id = $1
+              AND provider = 'discord'
+            ORDER BY is_primary DESC, linked_at ASC
+            """,
+            int(current_user["user_id"]),
+        )
+        target_discord_id = str(rows[0]["provider_subject"]) if rows else ""
+        if target_discord_id:
+            await auth.create_link_challenge(
+                request.app.state.hub_pool,
+                user_id=int(current_user["user_id"]),
+                provider=profile["provider"],
+                provider_subject=profile["provider_subject"],
+                display_name=profile["display_name"],
+                avatar_url=profile["avatar_url"],
+                profile_json=profile["profile_json"],
+                target_discord_id=target_discord_id,
+            )
+            response = RedirectResponse(auth.build_frontend_url("/account", steam="pending_dm"), status_code=303)
+            return response
+
+    user_id, result = await auth.login_or_link_identity(
+        request,
+        provider=profile["provider"],
+        provider_subject=profile["provider_subject"],
+        display_name=profile["display_name"],
+        avatar_url=profile["avatar_url"],
+        profile_json=profile["profile_json"],
+        intent=state,
+    )
+    token, expires_at = await auth.create_session(request.app.state.hub_pool, user_id, request)
+    response = RedirectResponse(auth.build_frontend_url("/account", steam=result), status_code=303)
+    auth.set_session_cookie(response, token, expires_at)
+    return response
+
+
+@app.get("/api/auth/challenge/{challenge_token}")
+async def auth_approve_challenge(request: Request, challenge_token: str):
+    challenge = await auth.consume_link_challenge(request.app.state.hub_pool, challenge_token)
+    user_id = int(challenge["user_id"])
+    token, expires_at = await auth.create_session(request.app.state.hub_pool, user_id, request)
+    response = RedirectResponse(auth.build_frontend_url("/account", approved="1"), status_code=303)
+    auth.set_session_cookie(response, token, expires_at)
+    return response

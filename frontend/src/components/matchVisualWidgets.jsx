@@ -125,7 +125,7 @@ export function TeamLineupPitch({ team, players, score, format, mode }) {
     <article className="team-lineup-pitch card">
       <header className="team-lineup-header">
         <div className="team-lineup-title">
-          <Crest teamId={team.id} />
+          <Crest teamId={team.id} team={team} />
           <div>
             <strong>{team.name}</strong>
             <small>{format} formation</small>
@@ -439,7 +439,7 @@ function TeamStatsTable({ team, rows }) {
     <article className="team-player-stats-card">
       <header className="team-player-stats-head">
         <div className="team-lineup-title">
-          <Crest teamId={team.id} />
+          <Crest teamId={team.id} team={team} />
           <div>
             <strong>{team.name}</strong>
             <small>Match player stats</small>

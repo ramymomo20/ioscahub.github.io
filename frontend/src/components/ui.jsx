@@ -66,19 +66,33 @@ export function StatChip({ label, value, tone = 'neutral' }) {
   )
 }
 
-export function Crest({ teamId, large = false }) {
-  const team = getTeamById(teamId)
+function buildFallbackTeam(teamId, name, shortName = 'TM', crestUrl = null) {
+  const safeName = String(name ?? '').trim() || 'Unknown Team'
+  const compact = safeName.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0] ?? '').join('').toUpperCase()
 
-  if (!team) {
+  return {
+    id: teamId != null ? String(teamId) : `transient-${safeName.toLowerCase().replace(/\s+/g, '-')}`,
+    name: safeName,
+    shortName: compact || shortName,
+    crest: compact || shortName,
+    crestUrl,
+    colors: ['#46d7ff', '#1e63ff'],
+  }
+}
+
+export function Crest({ teamId, team = null, large = false }) {
+  const resolvedTeam = team ?? getTeamById(teamId)
+
+  if (!resolvedTeam) {
     return <span className="crest">?</span>
   }
 
   return (
     <span
       className={`crest${large ? ' crest-large' : ''}`}
-      style={{ '--crest-start': team.colors[0], '--crest-end': team.colors[1] }}
+      style={{ '--crest-start': resolvedTeam.colors[0], '--crest-end': resolvedTeam.colors[1] }}
     >
-      {team.crestUrl ? <img src={team.crestUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : team.crest}
+      {resolvedTeam.crestUrl ? <img src={resolvedTeam.crestUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : resolvedTeam.crest}
     </span>
   )
 }
@@ -210,8 +224,10 @@ export function TeamCard({ team }) {
 
 export function MatchCard({ match }) {
   const navigate = useNavigate()
-  const homeTeam = getTeamById(match.homeTeamId)
-  const awayTeam = getTeamById(match.awayTeamId)
+  const existingHomeTeam = getTeamById(match.homeTeamId)
+  const existingAwayTeam = getTeamById(match.awayTeamId)
+  const homeTeam = existingHomeTeam ?? buildFallbackTeam(match.homeTeamId, match.homeTeamName, 'HM', match.homeCrestUrl)
+  const awayTeam = existingAwayTeam ?? buildFallbackTeam(match.awayTeamId, match.awayTeamName, 'AW', match.awayCrestUrl)
   const mvp = getPlayerById(match.mvpId)
   const homeWon = match.homeScore > match.awayScore
   const awayWon = match.awayScore > match.homeScore
@@ -248,10 +264,17 @@ export function MatchCard({ match }) {
 
       <div className="scoreboard scoreboard-expanded">
         <div className={`score-team score-team-home ${homeWon ? 'is-winner' : ''}`}>
-          <Link className="team-score-link team-score-link-home" to={`/teams/${match.homeTeamId}`} onClick={stopCardOpen}>
-            <Crest teamId={match.homeTeamId} large />
-            <strong className="team-score-name">{homeTeam?.name}</strong>
-          </Link>
+          {existingHomeTeam ? (
+            <Link className="team-score-link team-score-link-home" to={`/teams/${match.homeTeamId}`} onClick={stopCardOpen}>
+              <Crest teamId={match.homeTeamId} team={homeTeam} large />
+              <strong className="team-score-name">{homeTeam.name}</strong>
+            </Link>
+          ) : (
+            <div className="team-score-link team-score-link-home">
+              <Crest teamId={match.homeTeamId} team={homeTeam} large />
+              <strong className="team-score-name">{homeTeam.name}</strong>
+            </div>
+          )}
         </div>
 
         <div className="score-center score-center-link">
@@ -259,10 +282,17 @@ export function MatchCard({ match }) {
         </div>
 
         <div className={`score-team score-team-away ${awayWon ? 'is-winner' : ''}`}>
-          <Link className="team-score-link team-score-link-right team-score-link-away" to={`/teams/${match.awayTeamId}`} onClick={stopCardOpen}>
-            <Crest teamId={match.awayTeamId} large />
-            <strong className="team-score-name">{awayTeam?.name}</strong>
-          </Link>
+          {existingAwayTeam ? (
+            <Link className="team-score-link team-score-link-right team-score-link-away" to={`/teams/${match.awayTeamId}`} onClick={stopCardOpen}>
+              <Crest teamId={match.awayTeamId} team={awayTeam} large />
+              <strong className="team-score-name">{awayTeam.name}</strong>
+            </Link>
+          ) : (
+            <div className="team-score-link team-score-link-right team-score-link-away">
+              <Crest teamId={match.awayTeamId} team={awayTeam} large />
+              <strong className="team-score-name">{awayTeam.name}</strong>
+            </div>
+          )}
         </div>
       </div>
 

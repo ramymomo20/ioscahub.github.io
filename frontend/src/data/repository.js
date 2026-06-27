@@ -16,6 +16,7 @@ const matchDetailPromises = new Map()
 const teamDetailPromises = new Map()
 const tournamentDetailPromises = new Map()
 const apiRequestPromises = new Map()
+let latestLiveSyncFingerprint = ''
 
 let state = buildInitialState()
 
@@ -104,6 +105,20 @@ function getApiBaseUrl() {
 }
 
 const API_BASE_URL = getApiBaseUrl()
+
+function getApiWebSocketUrl() {
+  const base = API_BASE_URL || (typeof window !== 'undefined' ? window.location.origin : '')
+  if (!base) {
+    return ''
+  }
+  if (base.startsWith('https://')) {
+    return `${base.replace(/^https:\/\//, 'wss://')}/ws/live`
+  }
+  if (base.startsWith('http://')) {
+    return `${base.replace(/^http:\/\//, 'ws://')}/ws/live`
+  }
+  return ''
+}
 
 function getStorage() {
   if (typeof window === 'undefined') {
@@ -718,6 +733,59 @@ export function useHubData() {
     return () => window.clearInterval(intervalId)
   }, [snapshot.bootstrapStatus])
 
+  useEffect(() => {
+    if (snapshot.bootstrapStatus !== 'loaded') {
+      return undefined
+    }
+
+    const socketUrl = getApiWebSocketUrl()
+    if (!socketUrl || typeof window === 'undefined') {
+      return undefined
+    }
+
+    let closed = false
+    let socket = null
+    let reconnectTimer = null
+
+    const connect = () => {
+      if (closed) return
+      socket = new window.WebSocket(socketUrl)
+
+      socket.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data)
+          const fingerprint = JSON.stringify(payload)
+          if (fingerprint === latestLiveSyncFingerprint) {
+            return
+          }
+          latestLiveSyncFingerprint = fingerprint
+          if (payload?.type === 'hub_sync_state') {
+            void ensureBootstrapLoaded({ force: true })
+          }
+        } catch {
+          // Ignore malformed realtime payloads.
+        }
+      }
+
+      socket.onclose = () => {
+        if (closed) return
+        reconnectTimer = window.setTimeout(connect, 3000)
+      }
+    }
+
+    connect()
+
+    return () => {
+      closed = true
+      if (reconnectTimer) {
+        window.clearTimeout(reconnectTimer)
+      }
+      if (socket && socket.readyState < 2) {
+        socket.close()
+      }
+    }
+  }, [snapshot.bootstrapStatus])
+
   return {
     loading: snapshot.bootstrapStatus === 'idle' || snapshot.bootstrapStatus === 'loading',
     ready: snapshot.bootstrapStatus === 'loaded',
@@ -852,7 +920,11 @@ export function getTopRatedPlayers(limit = 3) {
 
 export function getTrendingPlayers(limit = 6, minimumAppearances = 2) {
   return [...state.players]
-    .filter((player) => toNumber(player.recent?.appearances) >= minimumAppearances)
+    .filter((player) => (
+      toNumber(player.recent?.appearances) >= minimumAppearances
+      && toNumber(player.recent?.avgRating) > 0
+      && toNumber(player.rating) > 0
+    ))
     .sort((left, right) => {
       const recentRatingGap = toNumber(right.recent?.avgRating) - toNumber(left.recent?.avgRating)
       if (recentRatingGap !== 0) return recentRatingGap
@@ -1077,7 +1149,9 @@ function mapMatchSummary(raw) {
     weekNumber: raw.week_number ?? null,
     leagueKey: raw.league_key ?? null,
     homeTeamName: raw.home_team_name ?? '',
+    homeCrestUrl: raw.home_crest_url ?? null,
     awayTeamName: raw.away_team_name ?? '',
+    awayCrestUrl: raw.away_crest_url ?? null,
     isDetailed: false,
   }
 }
@@ -2303,8 +2377,11 @@ function normalizeRegisteredDiscordId(value) {
 
 function normalizeSide(value, fallback = null) {
   const normalized = String(value ?? '').trim().toLowerCase()
-  if (normalized === 'home' || normalized === 'away') {
-    return normalized
+  if (['home', 'h', 'left', 'team1', 'team_1', 't1', '1'].includes(normalized)) {
+    return 'home'
+  }
+  if (['away', 'a', 'right', 'team2', 'team_2', 't2', '2'].includes(normalized)) {
+    return 'away'
   }
   return fallback
 }

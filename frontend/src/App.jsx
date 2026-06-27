@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { AppShell } from './components/AppShell'
+import { AccountPage } from './pages/AccountPage'
 import { HomePage } from './pages/HomePage'
 import { DiscordPage } from './pages/DiscordPage'
 import { MatchDetailPage } from './pages/MatchDetailPage'
@@ -19,6 +20,8 @@ function App() {
     <Routes>
       <Route element={<AppShell />}>
         <Route path="/" element={<HomePage />} />
+        <Route path="/login" element={<AccountPage />} />
+        <Route path="/account" element={<AccountPage />} />
         <Route path="/players" element={<PlayersPage />} />
         <Route path="/players/:playerId" element={<PlayerProfilePage />} />
         <Route path="/teams" element={<TeamsPage />} />
