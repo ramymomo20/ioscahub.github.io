@@ -5,7 +5,7 @@ import hashlib
 import hmac
 import json
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Any
 from urllib.parse import urlencode, urlparse, urlunparse
 
@@ -23,7 +23,44 @@ DISCORD_ME_URL = "https://discord.com/api/users/@me"
 
 
 def _now_utc() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.utcnow()
+
+
+def normalize_legacy_steam_id(value: str | None) -> str | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+
+    raw = raw.replace("STEAM0:", "STEAM_0:")
+    if raw.upper().startswith("STEAM_"):
+        parts = raw.split(":")
+        if len(parts) == 3 and parts[1].isdigit() and parts[2].isdigit():
+            return f"STEAM_0:{int(parts[1]) % 2}:{int(parts[2])}"
+        return None
+
+    if raw.startswith("[") and raw.endswith("]") and raw.upper().startswith("[U:"):
+        try:
+            account_id = int(raw.split(":")[-1].rstrip("]"))
+        except (TypeError, ValueError):
+            return None
+        y = account_id % 2
+        z = (account_id - y) // 2
+        return f"STEAM_0:{y}:{z}"
+
+    if raw.isdigit() and len(raw) >= 16:
+        id64_base = 76561197960265728
+        try:
+            steam64 = int(raw)
+        except (TypeError, ValueError):
+            return None
+        if steam64 <= id64_base:
+            return None
+        offset = steam64 - id64_base
+        y = offset % 2
+        z = (offset - y) // 2
+        return f"STEAM_0:{y}:{z}"
+
+    return None
 
 
 def _token_digest(token: str) -> str:
@@ -154,13 +191,15 @@ async def build_session_payload(pool, user_id: int) -> dict[str, Any]:
     if not user:
         raise HTTPException(status_code=404, detail="Auth user not found")
     identities = await list_identities(pool, user_id)
+    primary_steam_id = user.get("primary_steam_id")
     return {
         "authenticated": True,
         "user": public_row({
             "user_id": user["user_id"],
             "display_name": user.get("display_name"),
             "primary_discord_id": user.get("primary_discord_id"),
-            "primary_steam_id": user.get("primary_steam_id"),
+            "primary_steam_id": primary_steam_id,
+            "primary_steam_legacy_id": normalize_legacy_steam_id(primary_steam_id),
             "created_at": user.get("created_at"),
             "updated_at": user.get("updated_at"),
             "last_login_at": user.get("last_login_at"),

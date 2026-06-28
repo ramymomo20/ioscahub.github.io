@@ -148,6 +148,47 @@ export async function completePlayerRegistration(token) {
   })
 }
 
+export function useHubAuthProviders() {
+  const [state, setState] = useState({
+    loading: true,
+    discord: { configured: false },
+    steam: { configured: true },
+    error: null,
+  })
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadProviders() {
+      try {
+        const payload = await requestJson('/api/auth/providers')
+        if (cancelled) return
+        setState({
+          loading: false,
+          discord: payload?.discord ?? { configured: false },
+          steam: payload?.steam ?? { configured: true },
+          error: null,
+        })
+      } catch (error) {
+        if (cancelled) return
+        setState({
+          loading: false,
+          discord: { configured: false },
+          steam: { configured: true },
+          error: error instanceof Error ? error.message : 'Failed to load auth providers.',
+        })
+      }
+    }
+
+    void loadProviders()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  return state
+}
+
 export function useHubSession() {
   const [state, setState] = useState({
     loading: true,

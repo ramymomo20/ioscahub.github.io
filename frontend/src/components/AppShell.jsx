@@ -1,6 +1,6 @@
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useHubSession } from '../data/auth'
-import { useHubData } from '../data/repository'
+import { listPlayers, useHubData } from '../data/repository'
 
 const navItems = [
   { to: '/', label: 'Home', end: true },
@@ -29,6 +29,9 @@ export function AppShell() {
     { href: 'https://store.steampowered.com/app/673560/IOSoccer/', label: 'Steam', icon: steamIcon },
   ]
   const isTournamentDetailRoute = /^\/tournaments\/[^/]+$/.test(location.pathname)
+  const resolvedPlayer = resolveSessionPlayer(session.user)
+  const accountHref = resolvedPlayer ? `/players/${resolvedPlayer.id}` : (session.authenticated ? '/account' : '/login')
+  const accountLabel = session.authenticated ? 'My Hub' : 'Login'
 
   return (
     <div className="site-shell">
@@ -73,9 +76,30 @@ export function AppShell() {
             to={session.authenticated ? '/account' : '/login'}
             className={({ isActive }) => `nav-link${isActive ? ' is-active' : ''}`}
           >
-            {session.authenticated ? 'Account' : 'Login'}
+            {accountLabel}
           </NavLink>
         </nav>
+
+        <div className="topbar-account">
+          <NavLink to={accountHref} className="topbar-account-card">
+            <span className="topbar-account-avatar">
+              {resolvedPlayer?.portrait ?? initialsForUser(session.user?.display_name)}
+            </span>
+            <span className="topbar-account-copy">
+              <strong>{resolvedPlayer?.name ?? session.user?.display_name ?? 'Sign In'}</strong>
+              <small>
+                {resolvedPlayer
+                  ? `${formatShellRating(resolvedPlayer.rating)} rating | View player profile`
+                  : session.authenticated
+                    ? 'Open account and linked identities'
+                    : 'Connect Discord and Steam'}
+              </small>
+            </span>
+            {resolvedPlayer ? (
+              <span className="topbar-account-rating">{formatShellRating(resolvedPlayer.rating)}</span>
+            ) : null}
+          </NavLink>
+        </div>
       </header>
 
       <main className={`page-wrap${isTournamentDetailRoute ? ' page-wrap-wide' : ''}`}>
@@ -126,4 +150,37 @@ export function AppShell() {
       </footer>
     </div>
   )
+}
+
+function resolveSessionPlayer(user) {
+  if (!user) {
+    return null
+  }
+
+  const primaryDiscordId = String(user.primary_discord_id ?? '').trim()
+  const primarySteamLegacyId = String(user.primary_steam_legacy_id ?? '').trim()
+  const players = listPlayers()
+
+  return players.find((player) => (
+    (primaryDiscordId && String(player.discordId ?? '').trim() === primaryDiscordId)
+    || (primarySteamLegacyId && String(player.id ?? '').trim() === primarySteamLegacyId)
+  )) ?? null
+}
+
+function formatShellRating(value) {
+  const numeric = Number(value ?? 0)
+  return Number.isFinite(numeric) ? numeric.toFixed(1) : '-'
+}
+
+function initialsForUser(value) {
+  const text = String(value ?? '').trim()
+  if (!text) {
+    return '?'
+  }
+  return text
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((part) => part[0] ?? '')
+    .join('')
+    .toUpperCase()
 }

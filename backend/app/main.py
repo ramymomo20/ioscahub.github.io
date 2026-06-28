@@ -1470,6 +1470,18 @@ async def auth_session(request: Request):
     return await auth.build_session_payload(request.app.state.hub_pool, int(session["user_id"]))
 
 
+@app.get("/api/auth/providers")
+async def auth_providers():
+    return {
+        "discord": {
+            "configured": bool(config.HUB_DISCORD_CLIENT_ID and config.HUB_DISCORD_CLIENT_SECRET),
+        },
+        "steam": {
+            "configured": bool(config.HUB_STEAM_OPENID_URL),
+        },
+    }
+
+
 @app.get("/api/player-registration/status")
 async def player_registration_status(request: Request, token: str = Query(..., min_length=16)):
     current_user = await auth.current_user_from_request(request)
