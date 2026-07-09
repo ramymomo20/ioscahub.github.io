@@ -363,6 +363,80 @@ function replaceById(items, item) {
   return next
 }
 
+function preserveBootstrappedPlayerDetail(summaryPlayer, currentPlayersById) {
+  const existing = currentPlayersById.get(summaryPlayer.id)
+  if (!existing?.isDetailed) {
+    return summaryPlayer
+  }
+
+  return {
+    ...summaryPlayer,
+    records: existing.records ?? [],
+    activity: existing.activity ?? [],
+    tournamentSummary: existing.tournamentSummary ?? null,
+    matchLogs: existing.matchLogs ?? [],
+    isDetailed: true,
+  }
+}
+
+function preserveBootstrappedTeamDetail(summaryTeam, currentTeamsById) {
+  const existing = currentTeamsById.get(summaryTeam.id)
+  if (!existing?.isDetailed) {
+    return summaryTeam
+  }
+
+  return {
+    ...summaryTeam,
+    recentMatches: existing.recentMatches ?? [],
+    aggregateStats: existing.aggregateStats ?? null,
+    isDetailed: true,
+  }
+}
+
+function preserveBootstrappedMatchDetail(summaryMatch, currentMatchesById) {
+  const existing = currentMatchesById.get(summaryMatch.id)
+  if (!existing?.isDetailed) {
+    return summaryMatch
+  }
+
+  return {
+    ...summaryMatch,
+    homeEventStack: existing.homeEventStack ?? [],
+    awayEventStack: existing.awayEventStack ?? [],
+    comparisonStats: existing.comparisonStats ?? [],
+    gameHighlights: existing.gameHighlights ?? [],
+    shotMap: existing.shotMap ?? [],
+    shotZoneMaps: existing.shotZoneMaps ?? null,
+    shotZones: existing.shotZones ?? [],
+    lineups: existing.lineups ?? {
+      home: [],
+      away: [],
+    },
+    lineupTooltips: existing.lineupTooltips ?? {},
+    mvpSummary: existing.mvpSummary ?? [],
+    performances: existing.performances ?? [],
+    isDetailed: true,
+  }
+}
+
+function preserveBootstrappedTournamentDetail(summaryTournament, currentTournamentsById) {
+  const existing = currentTournamentsById.get(summaryTournament.id)
+  if (!existing?.isDetailed) {
+    return summaryTournament
+  }
+
+  return {
+    ...summaryTournament,
+    winnerTeamId: existing.winnerTeamId ?? null,
+    standingsGroups: existing.standingsGroups ?? [],
+    leaders: existing.leaders ?? {},
+    analytics: existing.analytics ?? null,
+    fixtures: existing.fixtures ?? [],
+    bracket: existing.bracket ?? summaryTournament.bracket,
+    isDetailed: true,
+  }
+}
+
 function applyDerivedState(baseState) {
   const teams = enrichTeams(baseState.teams, baseState.matches)
   const players = enrichPlayers(baseState.players, teams)
@@ -413,15 +487,35 @@ async function ensureBootstrapLoaded(options = {}) {
   bootstrapPromise = settleTask(fetchJson('/api/bootstrap', { bypassCache: force }), null)
     .then(async (bootstrapResult) => {
       if (bootstrapResult && !bootstrapResult.__hubFetchError && typeof bootstrapResult === 'object') {
+        const currentTeamsById = indexById(state.teams)
+        const currentPlayersById = indexById(state.players)
+        const currentMatchesById = indexById(state.matches)
+        const currentTournamentsById = indexById(state.tournaments)
         const mappedState = applyDerivedState({
           ...state,
           bootstrapStatus: 'loaded',
           bootstrapError: null,
           bootstrapLoadedAt: Date.now(),
-          teams: Array.isArray(bootstrapResult.teams) ? bootstrapResult.teams.map(mapTeamSummary) : [],
-          players: Array.isArray(bootstrapResult.players) ? bootstrapResult.players.map(mapPlayerSummary) : [],
-          matches: Array.isArray(bootstrapResult.matches) ? bootstrapResult.matches.map(mapMatchSummary) : [],
-          tournaments: Array.isArray(bootstrapResult.tournaments) ? bootstrapResult.tournaments.map(mapTournamentSummary) : [],
+          teams: Array.isArray(bootstrapResult.teams)
+            ? bootstrapResult.teams
+              .map(mapTeamSummary)
+              .map((team) => preserveBootstrappedTeamDetail(team, currentTeamsById))
+            : [],
+          players: Array.isArray(bootstrapResult.players)
+            ? bootstrapResult.players
+              .map(mapPlayerSummary)
+              .map((player) => preserveBootstrappedPlayerDetail(player, currentPlayersById))
+            : [],
+          matches: Array.isArray(bootstrapResult.matches)
+            ? bootstrapResult.matches
+              .map(mapMatchSummary)
+              .map((match) => preserveBootstrappedMatchDetail(match, currentMatchesById))
+            : [],
+          tournaments: Array.isArray(bootstrapResult.tournaments)
+            ? bootstrapResult.tournaments
+              .map(mapTournamentSummary)
+              .map((tournament) => preserveBootstrappedTournamentDetail(tournament, currentTournamentsById))
+            : [],
           media: Array.isArray(bootstrapResult.media) ? bootstrapResult.media.map(mapMediaItem) : [],
           summary: bootstrapResult.summary ?? null,
           matchmakingLeaders: mapMatchmakingLeaders(bootstrapResult.matchmaking_leaders),
@@ -457,15 +551,27 @@ async function ensureBootstrapLoaded(options = {}) {
       const rawMatches = matchesResult?.__hubFetchError ? [] : matchesResult
       const rawTournaments = tournamentsResult?.__hubFetchError ? [] : tournamentsResult
       const rawSummary = summaryResult?.__hubFetchError ? null : summaryResult
+      const currentTeamsById = indexById(state.teams)
+      const currentPlayersById = indexById(state.players)
+      const currentMatchesById = indexById(state.matches)
+      const currentTournamentsById = indexById(state.tournaments)
       const mappedState = applyDerivedState({
         ...state,
         bootstrapStatus: 'loaded',
         bootstrapError: null,
         bootstrapLoadedAt: Date.now(),
-        teams: rawTeams.map(mapTeamSummary),
-        players: rawPlayers.map(mapPlayerSummary),
-        matches: rawMatches.map(mapMatchSummary),
-        tournaments: rawTournaments.map(mapTournamentSummary),
+        teams: rawTeams
+          .map(mapTeamSummary)
+          .map((team) => preserveBootstrappedTeamDetail(team, currentTeamsById)),
+        players: rawPlayers
+          .map(mapPlayerSummary)
+          .map((player) => preserveBootstrappedPlayerDetail(player, currentPlayersById)),
+        matches: rawMatches
+          .map(mapMatchSummary)
+          .map((match) => preserveBootstrappedMatchDetail(match, currentMatchesById)),
+        tournaments: rawTournaments
+          .map(mapTournamentSummary)
+          .map((tournament) => preserveBootstrappedTournamentDetail(tournament, currentTournamentsById)),
         media: rawMedia.map(mapMediaItem),
         summary: rawSummary,
         matchmakingLeaders: { scorers: [], assisters: [], saves: [] },
