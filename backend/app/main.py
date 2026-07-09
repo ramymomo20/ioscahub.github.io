@@ -54,15 +54,19 @@ class LiveSyncBroker:
 async def _fetch_live_sync_payload(pool) -> dict[str, Any]:
     rows = await pool.fetch(
         f"""
-        SELECT sync_key, last_synced_at, rows_synced, status, error_message, updated_at
+        SELECT sync_key, last_source_updated_at, rows_synced, status, error_message
         FROM "{config.HUB_POSTGRES_SCHEMA}".hub_sync_state
         ORDER BY sync_key ASC
         """
     )
+    items = public_rows([dict(row) for row in rows])
+    fingerprint = hashlib.sha1(
+        json.dumps(items, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()
     return {
         "type": "hub_sync_state",
-        "items": public_rows([dict(row) for row in rows]),
-        "generated_at": datetime.utcnow().isoformat(),
+        "items": items,
+        "fingerprint": fingerprint,
     }
 
 
@@ -1267,7 +1271,7 @@ async def get_tournament(request: Request, tournament_id: int):
             FROM v_hub_match_overview m
         ) played ON played.match_stats_id = fixture.played_match_stats_id
         WHERE fixture.tournament_id = %s
-        ORDER BY fixture.league_key, fixture.week_number, fixture.fixture_id
+        ORDER BY fixture.league_key, (fixture.week_number IS NULL), fixture.week_number, fixture.fixture_id
         """,
         (tournament_id,),
         cache_ttl=0,

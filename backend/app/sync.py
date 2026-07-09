@@ -241,6 +241,19 @@ async def _get_hub_table_columns(hub_pool: asyncpg.Pool, table: str) -> set[str]
     return {str(row["column_name"]) for row in rows}
 
 
+async def _get_source_table_columns(pg_pool: asyncpg.Pool, table: str) -> set[str]:
+    rows = await pg_pool.fetch(
+        """
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = $1
+        """,
+        table,
+    )
+    return {str(row["column_name"]) for row in rows}
+
+
 async def _fetch_changed_match_scope_from_match_stats(
     pg_pool: asyncpg.Pool,
     watermark: datetime | None,
@@ -927,6 +940,49 @@ async def sync_rating_history(pg_pool: asyncpg.Pool, hub_pool: asyncpg.Pool, *, 
 
 
 async def sync_tournaments(pg_pool: asyncpg.Pool, hub_pool: asyncpg.Pool, *, force_full: bool = False) -> list[SyncResult]:
+    source_fixture_columns = await _get_source_table_columns(pg_pool, "tournament_fixtures")
+    stage_filter_sql = (
+        "COALESCE(NULLIF(lower(trim(f.stage_type)), ''), 'league') = 'league'"
+        if "stage_type" in source_fixture_columns
+        else "TRUE"
+    )
+    fixture_stage_select_sql = (
+        """
+            COALESCE(f.stage_type, 'league') AS stage_type,
+            f.round_number,
+            f.bracket_slot,
+        """
+        if "stage_type" in source_fixture_columns
+        else """
+            'league'::text AS stage_type,
+            NULL::int AS round_number,
+            NULL::int AS bracket_slot,
+        """
+    )
+    fixture_source_select_sql = (
+        """
+            f.home_source,
+            f.away_source,
+        """
+        if {"home_source", "away_source"}.issubset(source_fixture_columns)
+        else """
+            NULL::text AS home_source,
+            NULL::text AS away_source,
+        """
+    )
+    fixture_winner_select_sql = (
+        """
+            f.winner_guild_id,
+            f.winner_to_fixture_id,
+            f.loser_to_fixture_id,
+        """
+        if {"winner_guild_id", "winner_to_fixture_id", "loser_to_fixture_id"}.issubset(source_fixture_columns)
+        else """
+            NULL::bigint AS winner_guild_id,
+            NULL::int AS winner_to_fixture_id,
+            NULL::int AS loser_to_fixture_id,
+        """
+    )
     tournaments = _rows_as_dicts(await pg_pool.fetch(
         """
         SELECT
@@ -958,34 +1014,204 @@ async def sync_tournaments(pg_pool: asyncpg.Pool, hub_pool: asyncpg.Pool, *, for
         """
     ))
     standings = _rows_as_dicts(await pg_pool.fetch(
-        """
+        f"""
+        WITH tournament_meta AS (
+            SELECT
+                t.id AS tournament_id,
+                COALESCE(t.points_win, 3)::int AS points_win,
+                COALESCE(t.points_draw, 1)::int AS points_draw,
+                COALESCE(t.points_loss, 0)::int AS points_loss,
+                COALESCE(t.updated_at, t.created_at) AS tournament_updated_at
+            FROM tournaments t
+        ),
+        teams AS (
+            SELECT
+                tt.tournament_id,
+                tt.guild_id,
+                COALESCE(tt.league_key, 'A') AS league_key
+            FROM tournament_teams tt
+        ),
+        fixture_base AS (
+            SELECT
+                f.tournament_id,
+                COALESCE(f.league_key, 'A') AS league_key,
+                f.home_guild_id,
+                f.away_guild_id,
+                COALESCE(ht.guild_name, f.home_name_raw, '') AS home_name,
+                COALESCE(at.guild_name, f.away_name_raw, '') AS away_name,
+                f.played_match_stats_id,
+                COALESCE(f.is_draw_home, FALSE) AS is_draw_home,
+                COALESCE(f.is_draw_away, FALSE) AS is_draw_away,
+                COALESCE(f.is_forfeit_home, FALSE) AS is_forfeit_home,
+                COALESCE(f.is_forfeit_away, FALSE) AS is_forfeit_away,
+                COALESCE(f.forfeit_score, 10)::int AS forfeit_score,
+                COALESCE(f.result_set_at, f.played_at, f.created_at) AS fixture_updated_at
+            FROM tournament_fixtures f
+            LEFT JOIN iosca_teams ht ON ht.guild_id = f.home_guild_id
+            LEFT JOIN iosca_teams at ON at.guild_id = f.away_guild_id
+            WHERE {stage_filter_sql}
+              AND f.home_guild_id IS NOT NULL
+              AND f.away_guild_id IS NOT NULL
+              AND (
+                    COALESCE(f.is_played, FALSE) = TRUE
+                 OR f.played_match_stats_id IS NOT NULL
+                 OR COALESCE(f.is_draw_home, FALSE) = TRUE
+                 OR COALESCE(f.is_draw_away, FALSE) = TRUE
+                 OR COALESCE(f.is_forfeit_home, FALSE) = TRUE
+                 OR COALESCE(f.is_forfeit_away, FALSE) = TRUE
+              )
+        ),
+        played_matches AS (
+            SELECT
+                fb.tournament_id,
+                fb.league_key,
+                fb.home_guild_id AS home_id,
+                fb.away_guild_id AS away_id,
+                CASE
+                    WHEN m.home_guild_id = fb.home_guild_id THEN COALESCE(m.home_score, 0)::int
+                    WHEN m.away_guild_id = fb.home_guild_id THEN COALESCE(m.away_score, 0)::int
+                    WHEN regexp_replace(lower(COALESCE(m.home_team_name, '')), '[^a-z0-9]+', '', 'g')
+                       = regexp_replace(lower(COALESCE(fb.home_name, '')), '[^a-z0-9]+', '', 'g')
+                    THEN COALESCE(m.home_score, 0)::int
+                    WHEN regexp_replace(lower(COALESCE(m.away_team_name, '')), '[^a-z0-9]+', '', 'g')
+                       = regexp_replace(lower(COALESCE(fb.home_name, '')), '[^a-z0-9]+', '', 'g')
+                    THEN COALESCE(m.away_score, 0)::int
+                    ELSE COALESCE(m.home_score, 0)::int
+                END AS home_score,
+                CASE
+                    WHEN m.home_guild_id = fb.away_guild_id THEN COALESCE(m.home_score, 0)::int
+                    WHEN m.away_guild_id = fb.away_guild_id THEN COALESCE(m.away_score, 0)::int
+                    WHEN regexp_replace(lower(COALESCE(m.home_team_name, '')), '[^a-z0-9]+', '', 'g')
+                       = regexp_replace(lower(COALESCE(fb.away_name, '')), '[^a-z0-9]+', '', 'g')
+                    THEN COALESCE(m.home_score, 0)::int
+                    WHEN regexp_replace(lower(COALESCE(m.away_team_name, '')), '[^a-z0-9]+', '', 'g')
+                       = regexp_replace(lower(COALESCE(fb.away_name, '')), '[^a-z0-9]+', '', 'g')
+                    THEN COALESCE(m.away_score, 0)::int
+                    ELSE COALESCE(m.away_score, 0)::int
+                END AS away_score,
+                COALESCE(m.updated_at, m.datetime, fb.fixture_updated_at) AS source_updated_at
+            FROM fixture_base fb
+            JOIN match_stats m ON m.id = fb.played_match_stats_id
+            WHERE COALESCE(fb.is_draw_home, FALSE) = FALSE
+              AND COALESCE(fb.is_draw_away, FALSE) = FALSE
+              AND COALESCE(fb.is_forfeit_home, FALSE) = FALSE
+              AND COALESCE(fb.is_forfeit_away, FALSE) = FALSE
+        ),
+        manual_draw_matches AS (
+            SELECT
+                fb.tournament_id,
+                fb.league_key,
+                fb.home_guild_id AS home_id,
+                fb.away_guild_id AS away_id,
+                0::int AS home_score,
+                0::int AS away_score,
+                fb.fixture_updated_at AS source_updated_at
+            FROM fixture_base fb
+            WHERE COALESCE(fb.is_draw_home, FALSE) = TRUE
+              AND COALESCE(fb.is_draw_away, FALSE) = TRUE
+        ),
+        manual_forfeit_matches AS (
+            SELECT
+                fb.tournament_id,
+                fb.league_key,
+                fb.home_guild_id AS home_id,
+                fb.away_guild_id AS away_id,
+                CASE WHEN COALESCE(fb.is_forfeit_home, FALSE) THEN 0::int ELSE fb.forfeit_score END AS home_score,
+                CASE WHEN COALESCE(fb.is_forfeit_away, FALSE) THEN 0::int ELSE fb.forfeit_score END AS away_score,
+                fb.fixture_updated_at AS source_updated_at
+            FROM fixture_base fb
+            WHERE COALESCE(fb.is_forfeit_home, FALSE) = TRUE
+               OR COALESCE(fb.is_forfeit_away, FALSE) = TRUE
+        ),
+        all_matches AS (
+            SELECT * FROM played_matches
+            UNION ALL
+            SELECT * FROM manual_draw_matches
+            UNION ALL
+            SELECT * FROM manual_forfeit_matches
+        ),
+        team_rows AS (
+            SELECT
+                tournament_id,
+                league_key,
+                home_id AS guild_id,
+                1 AS matches_played,
+                CASE WHEN home_score > away_score THEN 1 ELSE 0 END AS wins,
+                CASE WHEN home_score = away_score THEN 1 ELSE 0 END AS draws,
+                CASE WHEN home_score < away_score THEN 1 ELSE 0 END AS losses,
+                home_score AS goals_for,
+                away_score AS goals_against,
+                source_updated_at
+            FROM all_matches
+            UNION ALL
+            SELECT
+                tournament_id,
+                league_key,
+                away_id AS guild_id,
+                1 AS matches_played,
+                CASE WHEN away_score > home_score THEN 1 ELSE 0 END AS wins,
+                CASE WHEN away_score = home_score THEN 1 ELSE 0 END AS draws,
+                CASE WHEN away_score < home_score THEN 1 ELSE 0 END AS losses,
+                away_score AS goals_for,
+                home_score AS goals_against,
+                source_updated_at
+            FROM all_matches
+        ),
+        agg AS (
+            SELECT
+                tournament_id,
+                league_key,
+                guild_id,
+                SUM(matches_played)::int AS matches_played,
+                SUM(wins)::int AS wins,
+                SUM(draws)::int AS draws,
+                SUM(losses)::int AS losses,
+                SUM(goals_for)::int AS goals_for,
+                SUM(goals_against)::int AS goals_against,
+                MAX(source_updated_at) AS source_updated_at
+            FROM team_rows
+            GROUP BY tournament_id, league_key, guild_id
+        )
         SELECT
-            tournament_id,
-            guild_id,
-            wins,
-            draws,
-            losses,
-            goals_for,
-            goals_against,
-            goal_diff,
-            points,
-            matches_played,
-            updated_at AS source_updated_at
-        FROM tournament_standings
+            tm.tournament_id,
+            te.guild_id,
+            COALESCE(a.wins, 0) AS wins,
+            COALESCE(a.draws, 0) AS draws,
+            COALESCE(a.losses, 0) AS losses,
+            COALESCE(a.goals_for, 0) AS goals_for,
+            COALESCE(a.goals_against, 0) AS goals_against,
+            (COALESCE(a.goals_for, 0) - COALESCE(a.goals_against, 0)) AS goal_diff,
+            (
+                COALESCE(a.wins, 0) * tm.points_win +
+                COALESCE(a.draws, 0) * tm.points_draw +
+                COALESCE(a.losses, 0) * tm.points_loss
+            )::int AS points,
+            COALESCE(a.matches_played, 0) AS matches_played,
+            COALESCE(a.source_updated_at, tm.tournament_updated_at) AS source_updated_at
+        FROM tournament_meta tm
+        JOIN teams te ON te.tournament_id = tm.tournament_id
+        LEFT JOIN agg a
+          ON a.tournament_id = te.tournament_id
+         AND a.guild_id = te.guild_id
+         AND a.league_key = te.league_key
+        ORDER BY tm.tournament_id ASC, te.league_key ASC, points DESC, goal_diff DESC, goals_for DESC, te.guild_id ASC
         """
     ))
     fixtures = _rows_as_dicts(await pg_pool.fetch(
-        """
+        f"""
         SELECT
             id AS fixture_id,
             tournament_id,
             league_key,
+            {fixture_stage_select_sql}
             week_number,
             week_label,
             home_guild_id,
             away_guild_id,
             home_name_raw AS home_name,
             away_name_raw AS away_name,
+            {fixture_source_select_sql}
+            {fixture_winner_select_sql}
             is_active,
             is_played,
             is_draw_home,
@@ -1001,10 +1227,21 @@ async def sync_tournaments(pg_pool: asyncpg.Pool, hub_pool: asyncpg.Pool, *, for
     ))
     _normalize_identifier_fields(teams, "guild_id")
     _normalize_identifier_fields(standings, "guild_id")
-    _normalize_identifier_fields(fixtures, "home_guild_id", "away_guild_id")
+    _normalize_identifier_fields(fixtures, "home_guild_id", "away_guild_id", "winner_guild_id")
 
     tournament_max = _max_source_updated_at(tournaments)
     standings_max = _max_source_updated_at(standings)
+
+    hub_fixture_columns = await _get_hub_table_columns(hub_pool, "hub_tournament_fixtures")
+    fixture_columns = [
+        "fixture_id", "tournament_id", "league_key", "week_number", "week_label",
+        "stage_type", "round_number", "bracket_slot", "home_guild_id", "away_guild_id",
+        "home_name", "away_name", "home_source", "away_source", "is_active",
+        "is_played", "is_draw_home", "is_draw_away", "is_forfeit_home",
+        "is_forfeit_away", "forfeit_score", "winner_guild_id", "winner_to_fixture_id",
+        "loser_to_fixture_id", "played_match_stats_id", "played_at", "created_at",
+    ]
+    fixture_columns = [column for column in fixture_columns if column in hub_fixture_columns]
 
     return [
         SyncResult(
@@ -1050,12 +1287,7 @@ async def sync_tournaments(pg_pool: asyncpg.Pool, hub_pool: asyncpg.Pool, *, for
                 hub_pool,
                 "hub_tournament_fixtures",
                 fixtures,
-                [
-                    "fixture_id", "tournament_id", "league_key", "week_number", "week_label",
-                    "home_guild_id", "away_guild_id", "home_name", "away_name", "is_active",
-                    "is_played", "is_draw_home", "is_draw_away", "is_forfeit_home",
-                    "is_forfeit_away", "forfeit_score", "played_match_stats_id", "played_at", "created_at",
-                ],
+                fixture_columns,
             ),
             None,
         ),

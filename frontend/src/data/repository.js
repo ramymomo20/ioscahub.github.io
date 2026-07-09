@@ -7,7 +7,9 @@ const DEFAULT_PAGE_SIZE = 200
 const TEAM_PAGE_SIZE = 250
 const MAX_PAGINATION_PAGES = 50
 const API_RESPONSE_CACHE_TTL_MS = 2 * 60 * 1000
-const BOOTSTRAP_REFRESH_INTERVAL_MS = 30 * 1000
+const BOOTSTRAP_STALE_AFTER_MS = 2 * 60 * 1000
+const BOOTSTRAP_FALLBACK_REFRESH_INTERVAL_MS = 5 * 60 * 1000
+const LIVE_REFRESH_DEBOUNCE_MS = 1500
 const API_RESPONSE_CACHE_PREFIX = 'iosca-hub-response:v2:'
 
 let bootstrapPromise = null
@@ -387,7 +389,7 @@ function applyDerivedState(baseState) {
 }
 
 function isBootstrapStale() {
-  return !state.bootstrapLoadedAt || (Date.now() - state.bootstrapLoadedAt) >= BOOTSTRAP_REFRESH_INTERVAL_MS
+  return !state.bootstrapLoadedAt || (Date.now() - state.bootstrapLoadedAt) >= BOOTSTRAP_STALE_AFTER_MS
 }
 
 async function ensureBootstrapLoaded(options = {}) {
@@ -726,60 +728,104 @@ export function useHubData() {
       return undefined
     }
 
-    const intervalId = window.setInterval(() => {
-      void ensureBootstrapLoaded({ force: true })
-    }, BOOTSTRAP_REFRESH_INTERVAL_MS)
-
-    return () => window.clearInterval(intervalId)
-  }, [snapshot.bootstrapStatus])
-
-  useEffect(() => {
-    if (snapshot.bootstrapStatus !== 'loaded') {
-      return undefined
-    }
-
     const socketUrl = getApiWebSocketUrl()
-    if (!socketUrl || typeof window === 'undefined') {
+    if (typeof window === 'undefined') {
       return undefined
     }
 
     let closed = false
     let socket = null
     let reconnectTimer = null
+    let fallbackIntervalId = null
+    let liveRefreshTimer = null
+
+    const stopFallbackPolling = () => {
+      if (fallbackIntervalId) {
+        window.clearInterval(fallbackIntervalId)
+        fallbackIntervalId = null
+      }
+    }
+
+    const scheduleRefresh = (delay = 0) => {
+      if (closed) return
+      if (liveRefreshTimer) {
+        window.clearTimeout(liveRefreshTimer)
+      }
+      liveRefreshTimer = window.setTimeout(() => {
+        void ensureBootstrapLoaded({ force: true })
+      }, delay)
+    }
+
+    const startFallbackPolling = () => {
+      if (fallbackIntervalId || closed) {
+        return
+      }
+      fallbackIntervalId = window.setInterval(() => {
+        if (document.visibilityState === 'visible') {
+          void ensureBootstrapLoaded({ force: true })
+        }
+      }, BOOTSTRAP_FALLBACK_REFRESH_INTERVAL_MS)
+    }
 
     const connect = () => {
-      if (closed) return
+      if (closed || !socketUrl) {
+        startFallbackPolling()
+        return
+      }
       socket = new window.WebSocket(socketUrl)
+
+      socket.onopen = () => {
+        stopFallbackPolling()
+      }
 
       socket.onmessage = (event) => {
         try {
           const payload = JSON.parse(event.data)
-          const fingerprint = JSON.stringify(payload)
+          const fingerprint = String(payload?.fingerprint ?? JSON.stringify(payload?.items ?? payload))
           if (fingerprint === latestLiveSyncFingerprint) {
             return
           }
           latestLiveSyncFingerprint = fingerprint
           if (payload?.type === 'hub_sync_state') {
-            void ensureBootstrapLoaded({ force: true })
+            scheduleRefresh(LIVE_REFRESH_DEBOUNCE_MS)
           }
         } catch {
           // Ignore malformed realtime payloads.
         }
       }
 
+      socket.onerror = () => {
+        if (socket && socket.readyState < 2) {
+          socket.close()
+        }
+      }
+
       socket.onclose = () => {
         if (closed) return
+        startFallbackPolling()
         reconnectTimer = window.setTimeout(connect, 3000)
       }
     }
 
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && isBootstrapStale()) {
+        scheduleRefresh(0)
+      }
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
     connect()
 
     return () => {
       closed = true
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
       if (reconnectTimer) {
         window.clearTimeout(reconnectTimer)
       }
+      if (liveRefreshTimer) {
+        window.clearTimeout(liveRefreshTimer)
+      }
+      stopFallbackPolling()
       if (socket && socket.readyState < 2) {
         socket.close()
       }
@@ -1849,6 +1895,14 @@ function mapTournamentFixture(rawFixture, tournament) {
     date: formatLongDate(matchDate),
     time: formatTime(matchDate),
     leagueKey,
+    stageType: rawFixture.stage_type ?? 'league',
+    roundNumber: rawFixture.round_number ?? null,
+    bracketSlot: rawFixture.bracket_slot ?? null,
+    homeSource: rawFixture.home_source ?? null,
+    awaySource: rawFixture.away_source ?? null,
+    winnerGuildId: rawFixture.winner_guild_id != null ? String(rawFixture.winner_guild_id) : null,
+    winnerToFixtureId: rawFixture.winner_to_fixture_id != null ? String(rawFixture.winner_to_fixture_id) : null,
+    loserToFixtureId: rawFixture.loser_to_fixture_id != null ? String(rawFixture.loser_to_fixture_id) : null,
     weekNumber: rawFixture.week_number ?? null,
   }
 }
