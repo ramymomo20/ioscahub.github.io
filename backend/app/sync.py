@@ -948,9 +948,9 @@ async def sync_tournaments(pg_pool: asyncpg.Pool, hub_pool: asyncpg.Pool, *, for
     )
     fixture_stage_select_sql = (
         """
-            COALESCE(f.stage_type, 'league') AS stage_type,
-            f.round_number,
-            f.bracket_slot,
+            COALESCE(stage_type, 'league') AS stage_type,
+            round_number,
+            bracket_slot,
         """
         if "stage_type" in source_fixture_columns
         else """
@@ -961,8 +961,8 @@ async def sync_tournaments(pg_pool: asyncpg.Pool, hub_pool: asyncpg.Pool, *, for
     )
     fixture_source_select_sql = (
         """
-            f.home_source,
-            f.away_source,
+            home_source,
+            away_source,
         """
         if {"home_source", "away_source"}.issubset(source_fixture_columns)
         else """
@@ -972,9 +972,9 @@ async def sync_tournaments(pg_pool: asyncpg.Pool, hub_pool: asyncpg.Pool, *, for
     )
     fixture_winner_select_sql = (
         """
-            f.winner_guild_id,
-            f.winner_to_fixture_id,
-            f.loser_to_fixture_id,
+            winner_guild_id,
+            winner_to_fixture_id,
+            loser_to_fixture_id,
         """
         if {"winner_guild_id", "winner_to_fixture_id", "loser_to_fixture_id"}.issubset(source_fixture_columns)
         else """
