@@ -1011,6 +1011,7 @@ async def sync_tournaments(pg_pool: asyncpg.Pool, hub_pool: asyncpg.Pool, *, for
             league_key,
             seed
         FROM tournament_teams
+        WHERE guild_id IS NOT NULL
         """
     ))
     standings = _rows_as_dicts(await pg_pool.fetch(
@@ -1030,6 +1031,7 @@ async def sync_tournaments(pg_pool: asyncpg.Pool, hub_pool: asyncpg.Pool, *, for
                 tt.guild_id,
                 COALESCE(tt.league_key, 'A') AS league_key
             FROM tournament_teams tt
+            WHERE tt.guild_id IS NOT NULL
         ),
         fixture_base AS (
             SELECT
@@ -1194,6 +1196,7 @@ async def sync_tournaments(pg_pool: asyncpg.Pool, hub_pool: asyncpg.Pool, *, for
           ON a.tournament_id = te.tournament_id
          AND a.guild_id = te.guild_id
          AND a.league_key = te.league_key
+        WHERE te.guild_id IS NOT NULL
         ORDER BY tm.tournament_id ASC, te.league_key ASC, points DESC, goal_diff DESC, goals_for DESC, te.guild_id ASC
         """
     ))
@@ -1228,6 +1231,8 @@ async def sync_tournaments(pg_pool: asyncpg.Pool, hub_pool: asyncpg.Pool, *, for
     _normalize_identifier_fields(teams, "guild_id")
     _normalize_identifier_fields(standings, "guild_id")
     _normalize_identifier_fields(fixtures, "home_guild_id", "away_guild_id", "winner_guild_id")
+    teams = [row for row in teams if row.get("guild_id")]
+    standings = [row for row in standings if row.get("guild_id")]
 
     tournament_max = _max_source_updated_at(tournaments)
     standings_max = _max_source_updated_at(standings)

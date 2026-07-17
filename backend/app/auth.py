@@ -5,7 +5,7 @@ import hashlib
 import hmac
 import json
 import secrets
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import urlencode, urlparse, urlunparse
 
@@ -24,6 +24,12 @@ DISCORD_ME_URL = "https://discord.com/api/users/@me"
 
 def _now_utc() -> datetime:
     return datetime.utcnow()
+
+
+def _as_utc_cookie_datetime(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 def normalize_legacy_steam_id(value: str | None) -> str | None:
@@ -117,7 +123,7 @@ def set_session_cookie(response: Response, token: str, expires_at: datetime) -> 
     response.set_cookie(
         key=config.HUB_SESSION_COOKIE_NAME,
         value=token,
-        expires=expires_at,
+        expires=_as_utc_cookie_datetime(expires_at),
         httponly=True,
         secure=config.HUB_SESSION_COOKIE_SECURE,
         samesite=config.HUB_SESSION_COOKIE_SAMESITE,
